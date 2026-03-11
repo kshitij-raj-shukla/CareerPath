@@ -1,35 +1,42 @@
 import { useState } from 'react';
+import { motion } from 'framer-motion';
+import PredictionForm from '../components/PredictionForm';
+import ResultsDashboard from '../components/ResultsDashboard';
 import { getPrediction } from '../services/api';
-import ProfileForm from '../components/ProfileForm';
-import Dashboard from '../components/Dashboard';
 
 export default function PredictPage() {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [profile, setProfile] = useState(null);
   const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  async function handlePredict(profileData) {
+  const handleSubmit = async (profile) => {
+    setError('');
     setLoading(true);
-    setError(null);
-    setResult(null);
     try {
-      const data = await getPrediction(profileData);
-      setProfile(profileData);
+      const data = await getPrediction(profile);
       setResult(data);
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to reach the prediction API');
+      setError(err.response?.data?.detail || 'Prediction failed');
     } finally {
       setLoading(false);
     }
-  }
+  };
 
   return (
-    <div className="app">
-      <h1>Skill Prediction</h1>
-      <ProfileForm onSubmit={handlePredict} loading={loading} />
-      {error && <div className="error">{error}</div>}
-      {result && <Dashboard profile={profile} result={result} />}
+    <div style={{ maxWidth: '960px', margin: '0 auto', padding: '0 32px 64px' }}>
+      <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="text-center" style={{ marginBottom: '48px' }}>
+        <h1 className="text-3xl md:text-4xl font-extrabold text-gray-900 mb-3">AI Career Prediction</h1>
+        <p className="text-base text-gray-500">Enter your skills to get an AI-powered readiness assessment.</p>
+      </motion.div>
+
+      <PredictionForm onSubmit={handleSubmit} loading={loading} />
+
+      {error && (
+        <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+          className="mt-4 text-sm text-red-500 text-center">{error}</motion.p>
+      )}
+
+      {result && <ResultsDashboard result={result} />}
     </div>
   );
 }

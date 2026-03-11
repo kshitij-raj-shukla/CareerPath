@@ -1,62 +1,43 @@
-import { Radar } from 'react-chartjs-2';
-import {
-  Chart as ChartJS,
-  RadialLinearScale,
-  PointElement,
-  LineElement,
-  Filler,
-  Tooltip,
-  Legend,
-} from 'chart.js';
+import { ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar } from 'recharts';
 
-ChartJS.register(RadialLinearScale, PointElement, LineElement, Filler, Tooltip, Legend);
+const LABELS = ['Coding', 'Projects', 'Networking', 'Communication', 'Knowledge'];
 
-const LABELS = ['GPA', 'Internships', 'Projects', 'Certifications', 'Soft Skills', 'Networking'];
-const MAX_VALUES = [10, 4, 6, 5, 10, 10];
-
-export default function SkillRadarChart({ profile }) {
-  const raw = [
-    profile.gpa,
-    profile.internships,
-    profile.projects,
-    profile.certifications,
-    profile.soft_skills_score,
-    profile.networking_score,
-  ];
-
-  // Normalise each value to 0-10 scale for a balanced chart
-  const normalised = raw.map((v, i) => (v / MAX_VALUES[i]) * 10);
-
-  const data = {
-    labels: LABELS,
-    datasets: [
-      {
-        label: 'Your Profile',
-        data: normalised,
-        backgroundColor: 'rgba(92, 107, 192, 0.25)',
-        borderColor: '#5c6bc0',
-        borderWidth: 2,
-        pointBackgroundColor: '#5c6bc0',
-      },
-    ],
-  };
-
-  const options = {
-    scales: {
-      r: {
-        beginAtZero: true,
-        max: 10,
-        ticks: { stepSize: 2, backdropColor: 'transparent' },
-        pointLabels: { font: { size: 12 } },
-      },
-    },
-    plugins: { legend: { display: false } },
-    maintainAspectRatio: true,
-  };
+export default function SkillRadarChart({ skills = [80, 75, 60, 90, 85] }) {
+  const data = LABELS.map((label, i) => ({
+    skill: label,
+    value: skills[i] || 0,
+    fullMark: 100,
+  }));
 
   return (
-    <div className="radar-wrapper">
-      <Radar data={data} options={options} />
-    </div>
+    <ResponsiveContainer width="100%" height="100%">
+      <RadarChart data={data} outerRadius="80%">
+        <PolarGrid stroke="#e5e7eb" />
+        <PolarAngleAxis
+          dataKey="skill"
+          tick={{ fill: '#374151', fontSize: 13, fontWeight: 500 }}
+        />
+        <PolarRadiusAxis
+          angle={30}
+          domain={[0, 100]}
+          tick={{ fill: 'transparent' }}
+          axisLine={false}
+        />
+        <Radar
+          name="Skills"
+          dataKey="value"
+          stroke="#6366F1"
+          fill="url(#radarGrad)"
+          fillOpacity={0.5}
+          strokeWidth={2}
+        />
+        <defs>
+          <linearGradient id="radarGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor="#6366F1" stopOpacity={0.6}/>
+            <stop offset="95%" stopColor="#8B5CF6" stopOpacity={0.1}/>
+          </linearGradient>
+        </defs>
+      </RadarChart>
+    </ResponsiveContainer>
   );
 }

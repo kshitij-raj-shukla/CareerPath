@@ -37,7 +37,7 @@ export async function getProgress() {
 }
 
 export async function toggleTask(planId, taskId, done) {
-  const { data } = await api.patch(`/api/progress/${planId}/task`, { task_id: taskId, done });
+  const { data } = await api.patch(`/api/progress/${planId}/task`, { task_id: Number(taskId), done });
   return data;
 }
 
