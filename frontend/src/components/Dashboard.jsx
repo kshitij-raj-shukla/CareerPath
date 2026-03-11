@@ -4,8 +4,8 @@ const WEEK_KEYS = ['week_1', 'week_2', 'week_3', 'week_4'];
 const WEEK_LABELS = ['Week 1', 'Week 2', 'Week 3', 'Week 4'];
 
 export default function Dashboard({ profile, result }) {
-  const { career_readiness, confidence, roadmap } = result;
-  const readyClass = career_readiness === 'Ready' ? 'ready' : 'not-ready';
+  const { career_readiness, confidence, roadmap, skill_analysis, career_recommendations } = result;
+  const readyClass = career_readiness === 'Ready' ? 'ready' : career_readiness === 'Moderately Ready' ? 'moderate' : 'not-ready';
 
   return (
     <div className="results">
@@ -33,6 +33,22 @@ export default function Dashboard({ profile, result }) {
         <h2>Skill Overview</h2>
         <SkillRadarChart profile={profile} />
       </div>
+
+      {/* ── Skill Gap Analysis ─────────────────────────────── */}
+      {skill_analysis && skill_analysis.weak_skills.length > 0 && (
+        <div className="card">
+          <h2>Skill Gap Analysis</h2>
+          <p><strong>Priority:</strong> {skill_analysis.improvement_priority}</p>
+          <ul className="weak-list">
+            {skill_analysis.weak_skills.map((gap, i) => (
+              <li key={i}>
+                <strong>{gap.skill}</strong> ({gap.current_value}/{gap.threshold}) — {gap.priority} priority
+                <br /><em>{gap.suggestion}</em>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* ── Weak Skills ────────────────────────────────────── */}
       {roadmap.weak_skills.length > 0 && (
@@ -79,6 +95,23 @@ export default function Dashboard({ profile, result }) {
           <p>No improvement areas detected — you're on track!</p>
         )}
       </div>
+
+      {/* ── Career Recommendations ─────────────────────────── */}
+      {career_recommendations && career_recommendations.recommended_roles.length > 0 && (
+        <div className="card">
+          <h2>Career Recommendations</h2>
+          <ul className="weak-list">
+            {career_recommendations.recommended_roles.map((role, i) => (
+              <li key={i}>
+                <strong>{role}</strong>
+                {career_recommendations.reasoning[i] && (
+                  <> — <em>{career_recommendations.reasoning[i]}</em></>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

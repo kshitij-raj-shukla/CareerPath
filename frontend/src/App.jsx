@@ -1,36 +1,32 @@
-import { useState } from 'react';
-import { getPrediction } from './services/api';
-import ProfileForm from './components/ProfileForm';
-import Dashboard from './components/Dashboard';
+import { Routes, Route, Navigate } from 'react-router-dom';
+import { useAuth } from './contexts/AuthContext';
+import Navbar from './components/Navbar';
+import ProtectedRoute from './components/ProtectedRoute';
+import AuthPage from './pages/AuthPage';
+import CareerPlanPage from './pages/CareerPlanPage';
+import PredictPage from './pages/PredictPage';
+import ProfilePage from './pages/ProfilePage';
+import ProgressPage from './pages/ProgressPage';
 
 export default function App() {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [profile, setProfile] = useState(null);
-  const [result, setResult] = useState(null);
+  const { user, loading } = useAuth();
 
-  async function handleSubmit(profileData) {
-    setLoading(true);
-    setError(null);
-    setResult(null);
-
-    try {
-      const data = await getPrediction(profileData);
-      setProfile(profileData);
-      setResult(data);
-    } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to reach the prediction API');
-    } finally {
-      setLoading(false);
-    }
-  }
+  if (loading) return <div className="app"><p>Loading…</p></div>;
 
   return (
-    <div className="app">
-      <h1>Career Readiness Dashboard</h1>
-      <ProfileForm onSubmit={handleSubmit} loading={loading} />
-      {error && <div className="error">{error}</div>}
-      {result && <Dashboard profile={profile} result={result} />}
-    </div>
+    <>
+      <Navbar />
+      <Routes>
+        <Route
+          path="/login"
+          element={user ? <Navigate to="/" replace /> : <AuthPage />}
+        />
+        <Route path="/" element={<ProtectedRoute><ProgressPage /></ProtectedRoute>} />
+        <Route path="/career-plan" element={<ProtectedRoute><CareerPlanPage /></ProtectedRoute>} />
+        <Route path="/predict" element={<ProtectedRoute><PredictPage /></ProtectedRoute>} />
+        <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </>
   );
 }

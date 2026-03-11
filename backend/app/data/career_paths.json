@@ -1,0 +1,330 @@
+{
+  "IAS": {
+    "title": "Indian Administrative Service (IAS)",
+    "description": "Become an IAS officer through the UPSC Civil Services Examination.",
+    "stages": [
+      {
+        "stage": "Class 10",
+        "label": "Secondary School",
+        "tasks": [
+          "Build strong fundamentals in all subjects",
+          "Develop reading habit – newspapers, current affairs",
+          "Start basic awareness of Indian polity and history"
+        ]
+      },
+      {
+        "stage": "Class 11-12",
+        "label": "Senior Secondary (Humanities / Any Stream)",
+        "tasks": [
+          "Choose a stream (Humanities preferred but optional)",
+          "Read NCERT books for History, Geography, Polity, Economics",
+          "Follow daily news and make notes on current affairs",
+          "Practice essay and answer writing"
+        ]
+      },
+      {
+        "stage": "Undergraduate",
+        "label": "Bachelor's Degree (Any Discipline)",
+        "tasks": [
+          "Complete graduation in any discipline",
+          "Start UPSC foundation course or self-study",
+          "Read standard reference books (Laxmikanth, Spectrum, etc.)",
+          "Join a test series for Prelims practice",
+          "Choose an optional subject and begin preparation"
+        ]
+      },
+      {
+        "stage": "Graduate",
+        "label": "UPSC Preparation Phase",
+        "tasks": [
+          "Dedicate full-time to UPSC preparation",
+          "Complete Prelims syllabus – GS Paper I & CSAT",
+          "Write daily answer practice for Mains (GS I–IV, Essay, Optional)",
+          "Attempt mock tests every week",
+          "Stay updated with monthly current affairs compilations"
+        ]
+      },
+      {
+        "stage": "Working Professional",
+        "label": "UPSC Examination & Interview",
+        "tasks": [
+          "Clear UPSC Prelims",
+          "Clear UPSC Mains",
+          "Prepare for Personality Test (Interview)",
+          "Complete LBSNAA training upon selection"
+        ]
+      }
+    ],
+    "key_skills": [
+      "Analytical thinking",
+      "Current affairs awareness",
+      "Essay and answer writing",
+      "General studies breadth",
+      "Decision making under pressure"
+    ]
+  },
+
+  "Software Engineer": {
+    "title": "Software Engineer",
+    "description": "Build a career in software development and engineering.",
+    "stages": [
+      {
+        "stage": "Class 10",
+        "label": "Secondary School",
+        "tasks": [
+          "Strengthen Mathematics and Science fundamentals",
+          "Start learning basic programming (Scratch, Python)",
+          "Explore computer science concepts through online courses"
+        ]
+      },
+      {
+        "stage": "Class 11-12",
+        "label": "Senior Secondary (PCM / CS)",
+        "tasks": [
+          "Take Physics, Chemistry, Mathematics (and CS if available)",
+          "Learn a programming language in depth (Python or Java)",
+          "Solve problems on platforms like HackerRank or CodeChef",
+          "Prepare for JEE / entrance exams for engineering colleges"
+        ]
+      },
+      {
+        "stage": "Undergraduate",
+        "label": "B.Tech / B.E. in Computer Science or related field",
+        "tasks": [
+          "Master Data Structures & Algorithms",
+          "Build 3-5 portfolio projects (web, mobile, or ML)",
+          "Complete at least 2 internships at tech companies",
+          "Earn certifications (AWS, Azure, or domain-specific)",
+          "Contribute to open-source projects on GitHub",
+          "Practice competitive programming regularly"
+        ]
+      },
+      {
+        "stage": "Graduate",
+        "label": "Entry-Level Software Engineer",
+        "tasks": [
+          "Prepare for coding interviews (LeetCode, System Design)",
+          "Apply to product-based companies and startups",
+          "Strengthen system design and architecture knowledge",
+          "Build a strong LinkedIn and professional network"
+        ]
+      },
+      {
+        "stage": "Working Professional",
+        "label": "Career Growth & Specialisation",
+        "tasks": [
+          "Deepen expertise in a specialisation (backend, frontend, ML, DevOps)",
+          "Lead projects and mentor junior engineers",
+          "Pursue M.Tech or MS if targeting research or senior roles",
+          "Attend conferences and publish technical articles",
+          "Target Senior / Staff Engineer or Engineering Manager track"
+        ]
+      }
+    ],
+    "key_skills": [
+      "Data Structures & Algorithms",
+      "System Design",
+      "Programming proficiency",
+      "Version control (Git)",
+      "Problem solving",
+      "Communication & teamwork"
+    ]
+  },
+
+  "Data Scientist": {
+    "title": "Data Scientist",
+    "description": "Build a career in data science, analytics, and machine learning.",
+    "stages": [
+      {
+        "stage": "Class 10",
+        "label": "Secondary School",
+        "tasks": [
+          "Build strong foundation in Mathematics and Statistics",
+          "Learn basics of programming (Python recommended)",
+          "Explore data visualisation through simple projects"
+        ]
+      },
+      {
+        "stage": "Class 11-12",
+        "label": "Senior Secondary (PCM)",
+        "tasks": [
+          "Take Physics, Chemistry, Mathematics",
+          "Learn Python programming and basic libraries (NumPy, Pandas)",
+          "Study probability and statistics in depth",
+          "Participate in data science competitions on Kaggle"
+        ]
+      },
+      {
+        "stage": "Undergraduate",
+        "label": "B.Tech / B.Sc. in CS, Statistics, or Mathematics",
+        "tasks": [
+          "Master statistics, linear algebra, and calculus",
+          "Learn machine learning algorithms (scikit-learn, TensorFlow)",
+          "Complete hands-on projects – EDA, prediction, NLP",
+          "Earn certifications (Google Data Analytics, IBM Data Science)",
+          "Do internships in data analytics or ML roles",
+          "Build a portfolio on GitHub and Kaggle"
+        ]
+      },
+      {
+        "stage": "Graduate",
+        "label": "M.Tech / MS or Direct Industry Entry",
+        "tasks": [
+          "Specialise in ML, Deep Learning, NLP, or Computer Vision",
+          "Publish research papers or Kaggle competition wins",
+          "Master big data tools (Spark, Hadoop, SQL)",
+          "Prepare for data science interviews (statistics, ML, coding)"
+        ]
+      },
+      {
+        "stage": "Working Professional",
+        "label": "Career Growth in Data Science",
+        "tasks": [
+          "Lead data science projects end-to-end",
+          "Learn MLOps and model deployment (Docker, Kubernetes, MLflow)",
+          "Explore senior roles: Lead DS, ML Engineer, Research Scientist",
+          "Mentor teams and contribute to open-source ML projects",
+          "Stay current with latest research (papers, conferences)"
+        ]
+      }
+    ],
+    "key_skills": [
+      "Statistics & Probability",
+      "Machine Learning",
+      "Python & SQL",
+      "Data Visualisation",
+      "Deep Learning",
+      "Communication of insights"
+    ]
+  },
+
+  "Doctor": {
+    "title": "Doctor (MBBS)",
+    "description": "Become a medical doctor through MBBS and specialisation.",
+    "stages": [
+      {
+        "stage": "Class 10",
+        "label": "Secondary School",
+        "tasks": [
+          "Build strong fundamentals in Science (Biology, Chemistry, Physics)",
+          "Develop a reading and study discipline",
+          "Start basic awareness of human biology and health"
+        ]
+      },
+      {
+        "stage": "Class 11-12",
+        "label": "Senior Secondary (PCB)",
+        "tasks": [
+          "Take Physics, Chemistry, Biology",
+          "Prepare for NEET-UG entrance examination",
+          "Join coaching or follow a structured NEET study plan",
+          "Solve previous year NEET papers regularly"
+        ]
+      },
+      {
+        "stage": "Undergraduate",
+        "label": "MBBS (5.5 years including internship)",
+        "tasks": [
+          "Complete MBBS from a recognised medical college",
+          "Excel in clinical rotations and hospital internships",
+          "Prepare for NEET-PG if pursuing specialisation",
+          "Develop bedside manner and patient communication skills"
+        ]
+      },
+      {
+        "stage": "Graduate",
+        "label": "MD / MS Specialisation",
+        "tasks": [
+          "Clear NEET-PG and secure a specialisation seat",
+          "Complete residency in chosen specialty",
+          "Publish research and attend medical conferences",
+          "Build clinical experience and professional reputation"
+        ]
+      },
+      {
+        "stage": "Working Professional",
+        "label": "Practising Doctor / Super Specialisation",
+        "tasks": [
+          "Establish private practice or join a hospital",
+          "Pursue DM / MCh for super specialisation if desired",
+          "Stay updated with medical advancements (CME credits)",
+          "Mentor medical students and contribute to medical education"
+        ]
+      }
+    ],
+    "key_skills": [
+      "Biological sciences",
+      "Clinical reasoning",
+      "Patient communication",
+      "Research methodology",
+      "Empathy and ethics",
+      "Continuous learning"
+    ]
+  },
+
+  "Product Manager": {
+    "title": "Product Manager",
+    "description": "Build a career in product management in the tech industry.",
+    "stages": [
+      {
+        "stage": "Class 10",
+        "label": "Secondary School",
+        "tasks": [
+          "Develop strong analytical and communication skills",
+          "Learn basic technology concepts and internet literacy",
+          "Read about products and businesses you use daily"
+        ]
+      },
+      {
+        "stage": "Class 11-12",
+        "label": "Senior Secondary (Any Stream)",
+        "tasks": [
+          "Choose any stream (Commerce / Science preferred)",
+          "Start learning about product thinking and design",
+          "Build small projects or participate in hackathons",
+          "Develop presentation and public speaking skills"
+        ]
+      },
+      {
+        "stage": "Undergraduate",
+        "label": "Bachelor's Degree (Engineering / Business)",
+        "tasks": [
+          "Study engineering, business, or design",
+          "Learn basic programming and data analysis",
+          "Do internships in product, business, or tech roles",
+          "Take courses on Product Management (Coursera, Reforge)",
+          "Build side projects and document product thinking"
+        ]
+      },
+      {
+        "stage": "Graduate",
+        "label": "MBA or Direct Industry Entry",
+        "tasks": [
+          "Pursue MBA from a top school (optional but helpful)",
+          "Apply for Associate Product Manager (APM) programmes",
+          "Practice product case studies and guesstimates",
+          "Build a portfolio of product teardowns and analyses"
+        ]
+      },
+      {
+        "stage": "Working Professional",
+        "label": "Product Manager → Senior PM → Director",
+        "tasks": [
+          "Lead product strategy and roadmap",
+          "Master metrics, A/B testing, and data-driven decisions",
+          "Build cross-functional leadership skills",
+          "Progress to Senior PM, Group PM, or VP Product",
+          "Mentor APMs and contribute to product community"
+        ]
+      }
+    ],
+    "key_skills": [
+      "Product thinking",
+      "Data analysis",
+      "User empathy",
+      "Cross-functional communication",
+      "Technical literacy",
+      "Strategic planning"
+    ]
+  }
+}
