@@ -14,6 +14,7 @@ from app.models.user_model import (
     UserLogin,
     TokenResponse,
     UserProfileResponse,
+    UserProfileUpdate,
 )
 from app.services.auth_service import (
     hash_password,
@@ -129,4 +130,54 @@ def get_profile(current_user: dict = Depends(get_current_user)):
         email=current_user["email"],
         current_stage=current_user.get("current_stage"),
         target_career=current_user.get("target_career"),
+    )
+
+
+# ── PATCH /profile ─────────────────────────────────────────────
+
+@router.patch("/profile", response_model=UserProfileResponse)
+def update_profile(body: UserProfileUpdate, current_user: dict = Depends(get_current_user)):
+    """Update editable profile fields for the authenticated user."""
+    db = get_db()
+
+    updates: dict[str, str] = {}
+    if body.current_stage is not None:
+        cleaned_stage = body.current_stage.strip()
+        if not cleaned_stage:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Current stage cannot be empty",
+            )
+        updates["current_stage"] = cleaned_stage
+
+    if body.target_career is not None:
+        cleaned_target = body.target_career.strip()
+        if not cleaned_target:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Target career cannot be empty",
+            )
+        updates["target_career"] = cleaned_target
+
+    if not updates:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No profile fields provided for update",
+        )
+
+    db.users.update_one({"_id": current_user["_id"]}, {"$set": updates})
+
+    updated = db.users.find_one({"_id": current_user["_id"]})
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    return UserProfileResponse(
+        id=str(updated["_id"]),
+        name=updated["name"],
+        email=updated["email"],
+        current_stage=updated.get("current_stage"),
+        target_career=updated.get("target_career"),
     )

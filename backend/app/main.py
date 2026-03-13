@@ -9,9 +9,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.ml.model_loader import load_model, unload_model
+from app.ml.assessment_model_loader import (
+    load_assessment_model,
+    unload_assessment_model,
+)
 from app.database.mongo_connection import connect as db_connect, close as db_close
 from app.routes.predict import router as predict_router
 from app.routes.career import router as career_router
+from app.routes.assessment import router as assessment_router
 from app.routes.auth import router as auth_router
 from app.routes.progress import router as progress_router
 
@@ -26,6 +31,11 @@ async def lifespan(app: FastAPI):
         print(f"WARNING: {exc} – /api/predict will return 503")
 
     try:
+        load_assessment_model()
+    except FileNotFoundError as exc:
+        print(f"WARNING: {exc} – /api/assessment will use heuristic scoring")
+
+    try:
         db_connect()
     except Exception as exc:
         print(f"WARNING: MongoDB unavailable – {exc}")
@@ -33,6 +43,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown: release resources
+    unload_assessment_model()
     unload_model()
     db_close()
 
@@ -55,6 +66,7 @@ app.add_middleware(
 # ── Routers ────────────────────────────────────────────────────
 app.include_router(predict_router)
 app.include_router(career_router)
+app.include_router(assessment_router)
 app.include_router(auth_router)
 app.include_router(progress_router)
 

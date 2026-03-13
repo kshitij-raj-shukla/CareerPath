@@ -49,9 +49,20 @@ _ALIASES: dict[str, str] = {
 def _normalise_stage(stage: str) -> str:
     """Map a user-supplied stage string to a canonical stage key."""
     key = stage.strip().lower()
+    key = " ".join(key.replace("-", " ").replace("_", " ").split())
     if key in STAGE_RANK:
         return key
-    return _ALIASES.get(key, key)
+
+    alias = _ALIASES.get(key)
+    if alias:
+        return alias
+
+    # Support professional entries with niche text, e.g.
+    # "Working Professional - Data Analyst".
+    if "working professional" in key or "professional" in key or "employed" in key:
+        return "working professional"
+
+    return key
 
 
 def _rank_of(stage: str) -> int:

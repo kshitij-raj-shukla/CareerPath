@@ -48,3 +48,9 @@ class UserProfileResponse(BaseModel):
     email: str
     current_stage: Optional[str] = None
     target_career: Optional[str] = None
+
+
+class UserProfileUpdate(BaseModel):
+    """Payload for PATCH /profile."""
+    current_stage: Optional[str] = Field(None, min_length=1, max_length=100)
+    target_career: Optional[str] = Field(None, min_length=1, max_length=100)

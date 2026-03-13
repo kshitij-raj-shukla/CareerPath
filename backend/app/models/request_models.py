@@ -18,6 +18,21 @@ class ProfileInput(BaseModel):
     networking_score: float = Field(..., ge=1, le=10, description="Networking score (1-10)")
 
 
+class AssessmentInput(BaseModel):
+    """Input submitted from the frontend assessment workflow."""
+
+    education_level: str = Field(..., min_length=2, max_length=50)
+    programming_skill: int = Field(..., ge=1, le=5)
+    math_skill: int = Field(..., ge=1, le=5)
+    problem_solving: int = Field(..., ge=1, le=5)
+    projects: int = Field(..., ge=0, le=20)
+    experience: float = Field(..., ge=0, le=20)
+    system_design: int = Field(..., ge=1, le=5)
+    communication: int = Field(..., ge=1, le=5)
+    ai_knowledge: int = Field(..., ge=1, le=5)
+    target_role: str = Field(..., min_length=2, max_length=100)
+
+
 # ── Sub-models for response ────────────────────────────────────
 
 class SkillGap(BaseModel):
@@ -50,6 +65,36 @@ class RoadmapResult(BaseModel):
 class CareerRecommendation(BaseModel):
     recommended_roles: list[str]
     reasoning: list[str]
+
+
+class AssessmentSkillGap(BaseModel):
+    skill: str
+    current_level: str
+    required_level: str
+    recommendation: str
+
+
+class CareerPlanSkillInput(BaseModel):
+    gpa: float
+    internships: int
+    projects: int
+    certifications: int
+    soft_skills_score: float
+    networking_score: float
+
+
+class AssessmentResponse(BaseModel):
+    target_role: str
+    education_level: str
+    readiness_score: float = Field(..., ge=0, le=100)
+    career_level: str
+    strengths: list[str]
+    skill_gaps: list[AssessmentSkillGap]
+    radar_chart: dict[str, float]
+    skill_graph: dict[str, float]
+    recommended_focus_areas: list[str]
+    summary: str
+    career_plan_inputs: CareerPlanSkillInput
 
 
 # ── Top-level response ─────────────────────────────────────────
