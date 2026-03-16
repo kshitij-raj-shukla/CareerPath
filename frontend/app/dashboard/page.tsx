@@ -11,6 +11,7 @@ import Link from "next/link";
 import { ArrowRight, CheckCircle, Target, Award } from "lucide-react";
 
 export default function DashboardPage() {
+  
   const { user, isLoggedIn, progress, predictionResults, token, updateProgress } = useAppContext();
   const router = useRouter();
   const [latestPlan, setLatestPlan] = useState<ProgressEntry | null>(null);
