@@ -10,6 +10,7 @@ import { RootNavigator } from "./src/navigation/RootNavigator";
 
 export default function App() {
   return (
+    
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <AppProvider>
@@ -18,5 +19,6 @@ export default function App() {
         </AppProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
+    
   );
 }
