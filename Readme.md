@@ -3,7 +3,7 @@
 ## 1) Clone project
 
 ```powershell
-git clone <your-repo-url>
+git clone https://github.com/kshitij-raj-shukla/CareerPath.git
 cd CareerPath
 ```
 
@@ -22,7 +22,7 @@ pip install -r requirements.txt
 Optional environment variables:
 
 ```powershell
-$env:JWT_SECRET = "change-me-before-production"
+$env:JWT_SECRET = "we-will-se-after-production"
 $env:MONGO_URI = "mongodb://localhost:27017"
 $env:MONGO_DB_NAME = "career_readiness"
 ```
