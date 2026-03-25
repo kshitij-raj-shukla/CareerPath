@@ -1,0 +1,2569 @@
+CareerPath - Curated Source Code
+Prepared for Literary Work - Computer Program
+
+Table of Contents
+1. Backend Core Code
+   - backend/main.py
+   - backend/app/main.py
+   - backend/app/database/mongo_connection.py
+2. Machine Learning Logic
+   - backend/app/ml/model_loader.py
+   - backend/app/ml/assessment_model_loader.py
+   - ml/generate_dataset.py
+   - ml/train_model.py
+   - ml/generate_assessment_dataset.py
+   - ml/train_assessment_model.py
+3. API Routes
+   - backend/app/routes/predict.py
+   - backend/app/routes/career.py
+   - backend/app/routes/assessment.py
+   - backend/app/routes/auth.py
+   - backend/app/routes/progress.py
+4. Data Models
+   - backend/app/models/request_models.py
+   - backend/app/models/user_model.py
+   - backend/app/models/user_profile.py
+   - backend/app/models/progress_model.py
+5. Core Services
+   - backend/app/services/auth_service.py
+   - backend/app/services/prediction_service.py
+   - backend/app/services/skill_analysis_service.py
+   - backend/app/services/roadmap_service.py
+   - backend/app/services/career_recommendation_service.py
+   - backend/app/services/career_gap_analysis_service.py
+   - backend/app/services/career_path_service.py
+   - backend/app/services/career_roadmap_service.py
+   - backend/app/services/custom_career_service.py
+   - backend/app/services/assessment_service.py
+   - backend/app/services/progress_service.py
+
+System Overview
+FastAPI backend with predictive career readiness, assessment scoring, and personalised roadmaps. Routes expose ML predictions, career plans, assessments, authentication, and user progress, backed by MongoDB.
+
+Backend Core Code
+=================
+
+backend/main.py
+---------------
+```python
+from app.main import app  # noqa: F401
+```
+
+backend/app/main.py
+-------------------
+```python
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.ml.model_loader import load_model, unload_model
+from app.ml.assessment_model_loader import (
+    load_assessment_model,
+    unload_assessment_model,
+)
+from app.database.mongo_connection import connect as db_connect, close as db_close
+from app.routes.predict import router as predict_router
+from app.routes.career import router as career_router
+from app.routes.assessment import router as assessment_router
+from app.routes.auth import router as auth_router
+from app.routes.progress import router as progress_router
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        load_model()
+    except FileNotFoundError as exc:
+        print(f"WARNING: {exc} - /api/predict will return 503")
+
+    try:
+        load_assessment_model()
+    except FileNotFoundError as exc:
+        print(f"WARNING: {exc} - /api/assessment will use heuristic scoring")
+
+    try:
+        db_connect()
+    except Exception as exc:
+        print(f"WARNING: MongoDB unavailable - {exc}")
+
+    yield
+
+    unload_assessment_model()
+    unload_model()
+    db_close()
+
+app = FastAPI(
+    title="Career Readiness & Personalized Roadmap API",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(predict_router)
+app.include_router(career_router)
+app.include_router(assessment_router)
+app.include_router(auth_router)
+app.include_router(progress_router)
+
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
+```
+
+backend/app/database/mongo_connection.py
+----------------------------------------
+```python
+import os
+from pymongo import MongoClient
+from pymongo.database import Database
+
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+DB_NAME = os.getenv("MONGO_DB_NAME", "career_readiness")
+
+_client: MongoClient | None = None
+_db: Database | None = None
+
+def connect() -> Database:
+    """Open a MongoDB connection and return the database handle."""
+    global _client, _db
+    _client = MongoClient(MONGO_URI)
+    _db = _client[DB_NAME]
+    print(f"[mongo] Connected to {MONGO_URI} / {DB_NAME}")
+    return _db
+
+def get_db() -> Database:
+    """Return the current database handle (call connect() first)."""
+    if _db is None:
+        raise RuntimeError("Database not connected - call connect() first")
+    return _db
+
+def close() -> None:
+    """Close the MongoDB connection."""
+    global _client, _db
+    if _client:
+        _client.close()
+        _client = None
+        _db = None
+        print("[mongo] Connection closed")
+```
+
+Machine Learning Logic
+======================
+
+backend/app/ml/model_loader.py
+------------------------------
+```python
+import os
+import joblib
+
+_DEFAULT_MODEL_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "ml", "model.pkl")
+)
+
+FEATURE_ORDER = [
+    "gpa", "internships", "projects",
+    "certifications", "soft_skills_score", "networking_score",
+]
+
+_model_cache: dict = {}
+
+def load_model(path: str = _DEFAULT_MODEL_PATH) -> None:
+    """Load a joblib-serialised sklearn pipeline into the cache."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Model file not found: {path}")
+    _model_cache["pipeline"] = joblib.load(path)
+    print(f"[model_loader] Model loaded from {path}")
+
+def get_model():
+    """Return the cached pipeline, or None if not loaded."""
+    return _model_cache.get("pipeline")
+
+def unload_model() -> None:
+    """Clear the cached model (called on shutdown)."""
+    _model_cache.clear()
+```
+
+backend/app/ml/assessment_model_loader.py
+-----------------------------------------
+```python
+"""Assessment model lifecycle management."""
+
+from __future__ import annotations
+
+import os
+
+import joblib
+
+_DEFAULT_MODEL_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "ml", "assessment_model.pkl")
+)
+
+ASSESSMENT_FEATURE_ORDER = [
+    "education_level",
+    "programming_skill",
+    "math_skill",
+    "problem_solving",
+    "projects",
+    "experience",
+    "system_design",
+    "communication",
+    "ai_knowledge",
+]
+
+_model_cache: dict[str, object] = {}
+
+def load_assessment_model(path: str = _DEFAULT_MODEL_PATH) -> None:
+    """Load the assessment regression pipeline if it exists."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Assessment model file not found: {path}")
+    _model_cache["pipeline"] = joblib.load(path)
+    print(f"[assessment_model_loader] Model loaded from {path}")
+
+def get_assessment_model():
+    """Return the cached assessment pipeline, or None if unavailable."""
+    return _model_cache.get("pipeline")
+
+def unload_assessment_model() -> None:
+    """Clear the cached assessment pipeline."""
+    _model_cache.clear()
+```
+
+ml/generate_dataset.py
+----------------------
+```python
+import numpy as np
+import pandas as pd
+import os
+
+NUM_SAMPLES = 10_000
+RANDOM_SEED = 42
+OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_PATH = os.path.join(OUTPUT_DIR, "career_readiness_dataset.csv")
+
+def generate_dataset(n: int, seed: int) -> pd.DataFrame:
+    """Generate synthetic student profiles with realistic distributions."""
+    rng = np.random.default_rng(seed)
+
+    gpa = np.clip(rng.normal(loc=7.5, scale=1.0, size=n), 5, 10)
+
+    internships = rng.choice([0, 1, 2, 3, 4], size=n, p=[0.30, 0.30, 0.20, 0.12, 0.08])
+
+    projects = rng.choice(range(7), size=n, p=[0.08, 0.15, 0.22, 0.22, 0.16, 0.10, 0.07])
+
+    certifications = rng.choice(range(6), size=n, p=[0.20, 0.25, 0.25, 0.15, 0.10, 0.05])
+
+    soft_skills_score = np.clip(rng.normal(loc=5.5, scale=2.0, size=n), 1, 10)
+
+    networking_score = np.clip(rng.normal(loc=5.0, scale=2.0, size=n), 1, 10)
+
+    df = pd.DataFrame({
+        "gpa": np.round(gpa, 2),
+        "internships": internships,
+        "projects": projects,
+        "certifications": certifications,
+        "soft_skills_score": np.round(soft_skills_score, 2),
+        "networking_score": np.round(networking_score, 2),
+    })
+
+    return df
+
+def compute_target(df: pd.DataFrame) -> pd.Series:
+    """Assign a 3-class career readiness label based on a weighted score.
+
+    Scoring logic (0-100 scale):
+      gpa            -> contributes up to 20 pts  (normalised from 5-10)
+      internships    -> contributes up to 15 pts  (normalised from 0-4)
+      projects       -> contributes up to 20 pts  (normalised from 0-6)
+      certifications -> contributes up to 10 pts  (normalised from 0-5)
+      soft_skills    -> contributes up to 20 pts  (normalised from 1-10)
+      networking     -> contributes up to 15 pts  (normalised from 1-10)
+
+    Thresholds:
+      score <  35  -> 0 (Not Ready)
+      score <  55  -> 1 (Moderately Ready)
+      score >= 55  -> 2 (Highly Ready)
+    """
+    score = (
+        ((df["gpa"] - 5) / 5)               * 20
+        + (df["internships"] / 4)            * 15
+        + (df["projects"] / 6)               * 20
+        + (df["certifications"] / 5)         * 10
+        + ((df["soft_skills_score"] - 1) / 9) * 20
+        + ((df["networking_score"] - 1) / 9)  * 15
+    )
+
+    labels = pd.Series(np.where(score >= 55, 2, np.where(score >= 35, 1, 0)), name="career_readiness")
+    return labels
+
+if __name__ == "__main__":
+    print(f"Generating {NUM_SAMPLES:,} synthetic student profiles ...")
+    df = generate_dataset(NUM_SAMPLES, RANDOM_SEED)
+
+    df["career_readiness"] = compute_target(df)
+
+    print(f"\nClass distribution:\n{df['career_readiness'].value_counts().sort_index()}")
+    print(f"\n  0 = Not Ready")
+    print(f"  1 = Moderately Ready")
+    print(f"  2 = Highly Ready")
+
+    df.to_csv(OUTPUT_PATH, index=False)
+    print(f"\nDataset saved to {OUTPUT_PATH}  ({len(df)} rows)")
+```
+
+ml/train_model.py
+-----------------
+```python
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+import joblib
+import os
+
+NUM_SAMPLES = 5000
+RANDOM_SEED = 42
+FEATURE_COLUMNS = [
+    "gpa", "internships", "projects",
+    "certifications", "soft_skills_score", "networking_score",
+]
+TARGET_COLUMN = "career_readiness"
+TARGET_NAMES = ["Not Ready", "Ready"]
+MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_OUTPUT_PATH = os.path.join(MODEL_DIR, "model.pkl")
+
+def generate_dataset(n: int, seed: int) -> pd.DataFrame:
+    """Generate a synthetic career-readiness dataset."""
+    rng = np.random.default_rng(seed)
+
+    data = pd.DataFrame({
+        "gpa": rng.uniform(5, 10, n),
+        "internships": rng.integers(0, 5, n),        # 0-4
+        "projects": rng.integers(0, 7, n),            # 0-6
+        "certifications": rng.integers(0, 6, n),      # 0-5
+        "soft_skills_score": rng.uniform(1, 10, n),
+        "networking_score": rng.uniform(1, 10, n),
+    })
+
+    data[TARGET_COLUMN] = (
+        (data["gpa"] > 7)
+        & (data["projects"] >= 3)
+        & (data["soft_skills_score"] > 6)
+    ).astype(int)
+
+    return data
+
+def build_pipeline() -> Pipeline:
+    """Build a scikit-learn pipeline with scaling + RandomForest."""
+    return Pipeline([
+        ("scaler", StandardScaler()),
+        ("clf", RandomForestClassifier(n_estimators=100, random_state=RANDOM_SEED)),
+    ])
+
+def train_model(df: pd.DataFrame):
+    """Train the pipeline and return it along with test-set metrics."""
+    X = df[FEATURE_COLUMNS]
+    y = df[TARGET_COLUMN]
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=RANDOM_SEED, stratify=y,
+    )
+
+    pipeline = build_pipeline()
+    pipeline.fit(X_train, y_train)
+
+    y_pred = pipeline.predict(X_test)
+
+    metrics = {
+        "accuracy": accuracy_score(y_test, y_pred),
+        "report": classification_report(y_test, y_pred, target_names=TARGET_NAMES),
+        "confusion_matrix": confusion_matrix(y_test, y_pred),
+    }
+
+    return pipeline, metrics
+
+def save_model(model, path: str):
+    """Persist the trained pipeline to disk."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    joblib.dump(model, path)
+    print(f"Model saved to {path}")
+
+def load_model(path: str = MODEL_OUTPUT_PATH):
+    """Load a previously saved pipeline from disk."""
+    return joblib.load(path)
+
+if __name__ == "__main__":
+    print(f"Generating {NUM_SAMPLES} synthetic samples ...")
+    df = generate_dataset(NUM_SAMPLES, RANDOM_SEED)
+    print(f"Class distribution:\n{df[TARGET_COLUMN].value_counts()}\n")
+
+    pipeline, metrics = train_model(df)
+    print(f"Accuracy : {metrics['accuracy']:.4f}\n")
+    print(f"Classification report:\n{metrics['report']}")
+    print(f"Confusion matrix:\n{metrics['confusion_matrix']}\n")
+
+    save_model(pipeline, MODEL_OUTPUT_PATH)
+```
+
+ml/generate_assessment_dataset.py
+---------------------------------
+```python
+import os
+
+import numpy as np
+import pandas as pd
+
+NUM_SAMPLES = 12_000
+RANDOM_SEED = 42
+OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_PATH = os.path.join(OUTPUT_DIR, "assessment_readiness_dataset.csv")
+
+EDUCATION_LEVELS = ["High School", "Bachelor's", "Master's", "PhD"]
+
+def compute_readiness_score(df: pd.DataFrame) -> pd.Series:
+    education_weight = df["education_level"].map({
+        "High School": 25,
+        "Bachelor's": 55,
+        "Master's": 75,
+        "PhD": 90,
+    })
+
+    score = (
+        education_weight * 0.10
+        + (df["programming_skill"] / 5) * 18
+        + (df["math_skill"] / 5) * 12
+        + (df["problem_solving"] / 5) * 16
+        + (df["system_design"] / 5) * 12
+        + (df["communication"] / 5) * 10
+        + (df["ai_knowledge"] / 5) * 12
+        + (np.minimum(df["projects"], 8) / 8) * 5
+        + (np.minimum(df["experience"], 6) / 6) * 5
+    )
+    noise = np.random.default_rng(RANDOM_SEED).normal(0, 3, len(df))
+    return pd.Series(np.clip(score + noise, 0, 100).round(2), name="readiness_score")
+
+def generate_dataset(n: int, seed: int) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    df = pd.DataFrame({
+        "education_level": rng.choice(EDUCATION_LEVELS, size=n, p=[0.20, 0.45, 0.25, 0.10]),
+        "programming_skill": rng.integers(1, 6, size=n),
+        "math_skill": rng.integers(1, 6, size=n),
+        "problem_solving": rng.integers(1, 6, size=n),
+        "projects": rng.integers(0, 10, size=n),
+        "experience": np.round(rng.uniform(0, 8, size=n), 2),
+        "system_design": rng.integers(1, 6, size=n),
+        "communication": rng.integers(1, 6, size=n),
+        "ai_knowledge": rng.integers(1, 6, size=n),
+    })
+    df["readiness_score"] = compute_readiness_score(df)
+    return df
+
+if __name__ == "__main__":
+    dataset = generate_dataset(NUM_SAMPLES, RANDOM_SEED)
+    dataset.to_csv(OUTPUT_PATH, index=False)
+    print(f"Saved {len(dataset)} assessment samples to {OUTPUT_PATH}")
+```
+
+ml/train_assessment_model.py
+----------------------------
+```python
+import os
+
+import joblib
+import pandas as pd
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder
+
+from generate_assessment_dataset import generate_dataset
+
+RANDOM_SEED = 42
+MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
+DATASET_PATH = os.path.join(MODEL_DIR, "assessment_readiness_dataset.csv")
+MODEL_OUTPUT_PATH = os.path.join(MODEL_DIR, "assessment_model.pkl")
+FEATURE_COLUMNS = [
+    "education_level",
+    "programming_skill",
+    "math_skill",
+    "problem_solving",
+    "projects",
+    "experience",
+    "system_design",
+    "communication",
+    "ai_knowledge",
+]
+TARGET_COLUMN = "readiness_score"
+
+def load_or_generate_dataset() -> pd.DataFrame:
+    if os.path.exists(DATASET_PATH):
+        return pd.read_csv(DATASET_PATH)
+    dataset = generate_dataset(12_000, RANDOM_SEED)
+    dataset.to_csv(DATASET_PATH, index=False)
+    return dataset
+
+def build_pipeline() -> Pipeline:
+    preprocessor = ColumnTransformer(
+        transformers=[
+            (
+                "education",
+                OneHotEncoder(handle_unknown="ignore"),
+                ["education_level"],
+            ),
+        ],
+        remainder="passthrough",
+    )
+    return Pipeline([
+        ("preprocessor", preprocessor),
+        (
+            "regressor",
+            RandomForestRegressor(
+                n_estimators=250,
+                random_state=RANDOM_SEED,
+                min_samples_leaf=2,
+            ),
+        ),
+    ])
+
+if __name__ == "__main__":
+    df = load_or_generate_dataset()
+    X = df[FEATURE_COLUMNS]
+    y = df[TARGET_COLUMN]
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=0.2,
+        random_state=RANDOM_SEED,
+    )
+
+    pipeline = build_pipeline()
+    pipeline.fit(X_train, y_train)
+
+    predictions = pipeline.predict(X_test)
+    print(f"MAE: {mean_absolute_error(y_test, predictions):.3f}")
+    print(f"R2: {r2_score(y_test, predictions):.3f}")
+
+    joblib.dump(pipeline, MODEL_OUTPUT_PATH)
+    print(f"Assessment model saved to {MODEL_OUTPUT_PATH}")
+```
+
+API Routes
+==========
+
+backend/app/routes/predict.py
+-----------------------------
+```python
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, HTTPException
+
+from app.models.request_models import (
+    ProfileInput,
+    PredictionResponse,
+    SkillAnalysisResult,
+    SkillGap,
+    RoadmapResult,
+    CareerRecommendation,
+)
+from app.services.prediction_service import predict
+from app.services.skill_analysis_service import analyze_skill_gaps
+from app.services.roadmap_service import generate_roadmap
+from app.services.career_recommendation_service import recommend_career_path
+from app.database.mongo_connection import get_db
+
+router = APIRouter(prefix="/api", tags=["Prediction"])
+
+@router.post("/predict", response_model=PredictionResponse)
+def predict_career(request: ProfileInput):
+    """Full career readiness prediction pipeline.
+
+    1. Run ML prediction
+    2. Analyse skill gaps
+    3. Generate improvement roadmap
+    4. Recommend career roles
+    5. Persist to MongoDB
+    """
+    profile = request.model_dump()
+
+    try:
+        pred = predict(profile)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {exc}")
+
+    career_readiness = pred["career_readiness"]
+    confidence = pred["confidence"]
+
+    gaps = analyze_skill_gaps(profile)
+
+    roadmap = generate_roadmap(profile, career_readiness, confidence)
+
+    careers = recommend_career_path(profile)
+
+    try:
+        db = get_db()
+        db.predictions.insert_one({
+            "profile": profile,
+            "career_readiness": career_readiness,
+            "confidence": confidence,
+            "skill_gaps": gaps,
+            "roadmap": roadmap,
+            "career_recommendations": careers,
+            "created_at": datetime.now(timezone.utc),
+        })
+    except Exception:
+        pass
+
+    return PredictionResponse(
+        career_readiness=career_readiness,
+        confidence=confidence,
+        skill_analysis=SkillAnalysisResult(
+            weak_skills=[SkillGap(**s) for s in gaps["weak_skills"]],
+            improvement_priority=gaps["improvement_priority"],
+        ),
+        roadmap=RoadmapResult(
+            readiness_level=roadmap["readiness_level"],
+            weak_skills=roadmap["weak_skills"],
+            recommended_topics=roadmap["recommended_topics"],
+            improvement_plan=roadmap["improvement_plan"],
+        ),
+        career_recommendations=CareerRecommendation(**careers),
+    )
+```
+
+backend/app/routes/career.py
+----------------------------
+```python
+from datetime import datetime, timezone
+from typing import Optional
+
+from fastapi import APIRouter, Request
+
+from app.models.user_profile import (
+    UserProfile,
+    CareerPlanResponse,
+    StageStep,
+    SkillGapItem,
+    ReadinessPrediction,
+)
+from app.services.career_path_service import get_career_path, get_stages_for_career, list_careers
+from app.services.career_gap_analysis_service import (
+    annotate_career_path,
+    compute_next_steps,
+    analyze_skill_gaps,
+    _rank_of,
+)
+from app.services.career_roadmap_service import generate_career_roadmap
+from app.services.custom_career_service import (
+    build_custom_career_path,
+    build_professional_roadmap,
+)
+from app.services.prediction_service import predict as ml_predict
+from app.services.progress_service import save_progress
+from app.services.auth_service import decode_access_token
+from app.database.mongo_connection import get_db
+
+router = APIRouter(prefix="/api", tags=["Career Plan"])
+
+_ML_ELIGIBLE_MIN_RANK = 2  # "undergraduate" and above
+
+_ML_REQUIRED_FIELDS = [
+    "gpa", "internships", "projects",
+    "certifications", "soft_skills_score", "networking_score",
+]
+
+def _can_run_ml(stage: str, skills: Optional[dict]) -> bool:
+    """Return True if the user's stage and provided skills allow ML prediction."""
+    if _rank_of(stage) < _ML_ELIGIBLE_MIN_RANK:
+        return False
+    if skills is None:
+        return False
+    return all(skills.get(f) is not None for f in _ML_REQUIRED_FIELDS)
+
+@router.post("/career-plan", response_model=CareerPlanResponse)
+def create_career_plan(request: UserProfile, http_request: Request):
+    """Generate a full career plan for the user."""
+
+    user_id: str | None = None
+    auth_header = http_request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        payload = decode_access_token(auth_header[7:])
+        if payload and payload.get("sub"):
+            db = get_db()
+            user_doc = db.users.find_one({"email": payload["sub"]})
+            if user_doc:
+                user_id = str(user_doc["_id"])
+
+    career_data = get_career_path(request.target_career)
+    is_custom = career_data is None
+
+    if is_custom:
+        career_data = build_custom_career_path(request.target_career)
+
+    stages = career_data.get("stages", [])
+
+    annotated = annotate_career_path(stages, request.current_stage)
+
+    skills_dict = request.skills.model_dump() if request.skills else None
+    skill_gaps = analyze_skill_gaps(request.current_stage, skills_dict)
+
+    readiness: Optional[dict] = None
+    if _can_run_ml(request.current_stage, skills_dict):
+        try:
+            readiness = ml_predict(skills_dict)
+        except RuntimeError:
+            pass
+
+    next_steps = compute_next_steps(stages, request.current_stage)
+
+    is_professional = _rank_of(request.current_stage) >= 4
+    if is_professional:
+        roadmap = build_professional_roadmap(
+            career=career_data["title"],
+            current_role=request.current_role,
+            skill_gaps=skill_gaps,
+        )
+    else:
+        roadmap = generate_career_roadmap(
+            career_title=career_data["title"],
+            annotated_path=annotated,
+            skill_gaps=skill_gaps,
+            next_steps=next_steps,
+            readiness=readiness,
+            current_role=request.current_role,
+        )
+
+    response = CareerPlanResponse(
+        target_career=request.target_career,
+        current_stage=request.current_stage,
+        current_role=request.current_role,
+        is_custom_career=is_custom,
+        career_path=[StageStep(**s) for s in annotated],
+        next_steps=next_steps,
+        skill_gaps=[SkillGapItem(**g) for g in skill_gaps],
+        readiness=ReadinessPrediction(**readiness) if readiness else None,
+        roadmap=roadmap,
+    )
+
+    try:
+        plan_dict = response.model_dump()
+        if user_id:
+            save_progress(user_id, plan_dict)
+        else:
+            db = get_db()
+            db.career_plans.insert_one({
+                "profile": request.model_dump(),
+                **plan_dict,
+                "created_at": datetime.now(timezone.utc),
+            })
+    except Exception:
+        pass  # DB unavailable - don't fail the request
+
+    return response
+
+@router.get("/careers", tags=["Career Plan"])
+def get_available_careers():
+    """Return the list of supported career paths."""
+    return {"careers": list_careers()}
+```
+
+backend/app/routes/assessment.py
+--------------------------------
+```python
+"""Assessment routes for the richer frontend assessment workflow."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+
+from app.database.mongo_connection import get_db
+from app.models.request_models import AssessmentInput, AssessmentResponse
+from app.routes.auth import get_current_user
+from app.services.assessment_service import run_assessment
+from app.services.auth_service import decode_access_token
+
+router = APIRouter(prefix="/api", tags=["Assessment"])
+
+def _resolve_user_id(http_request: Request) -> str | None:
+    auth_header = http_request.headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return None
+
+    payload = decode_access_token(auth_header[7:])
+    if not payload or not payload.get("sub"):
+        return None
+
+    try:
+        db = get_db()
+        user_doc = db.users.find_one({"email": payload["sub"]})
+    except Exception:
+        return None
+
+    if not user_doc:
+        return None
+    return str(user_doc["_id"])
+
+@router.post("/assessment", response_model=AssessmentResponse)
+def create_assessment(body: AssessmentInput, http_request: Request):
+    """Run the frontend assessment pipeline and optionally persist it."""
+    result = run_assessment(body.model_dump())
+
+    try:
+        db = get_db()
+        db.assessments.insert_one({
+            "user_id": _resolve_user_id(http_request),
+            "request": body.model_dump(),
+            "result": result,
+            "created_at": datetime.now(timezone.utc),
+        })
+    except Exception:
+        pass
+
+    return AssessmentResponse(**result)
+
+@router.get("/assessment/latest", response_model=AssessmentResponse)
+def get_latest_assessment(current_user: dict = Depends(get_current_user)):
+    """Return the latest saved assessment for the authenticated user."""
+    db = get_db()
+    doc = db.assessments.find_one(
+        {"user_id": str(current_user["_id"]), "result": {"$exists": True}},
+        sort=[("created_at", -1)],
+    )
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No assessment found for this user",
+        )
+
+    return AssessmentResponse(**doc["result"])
+```
+
+backend/app/routes/auth.py
+--------------------------
+```python
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+
+from app.models.user_model import (
+    UserSignup,
+    UserLogin,
+    TokenResponse,
+    UserProfileResponse,
+    UserProfileUpdate,
+)
+from app.services.auth_service import (
+    hash_password,
+    verify_password,
+    create_access_token,
+    decode_access_token,
+)
+from app.database.mongo_connection import get_db
+
+router = APIRouter(prefix="/api", tags=["Auth"])
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login")
+
+def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
+    """Decode the JWT, look up the user in MongoDB, and return the doc.
+
+    Raises 401 if the token is invalid or the user no longer exists.
+    """
+    payload = decode_access_token(token)
+    if payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user_email: str | None = payload.get("sub")
+    if user_email is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token payload missing subject",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    db = get_db()
+    user = db.users.find_one({"email": user_email})
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return user
+
+@router.post("/signup", status_code=status.HTTP_201_CREATED)
+def signup(body: UserSignup):
+    """Register a new user account.
+
+    - Hashes the password with bcrypt before storing.
+    - Rejects duplicate emails with 409 Conflict.
+    """
+    db = get_db()
+
+    if db.users.find_one({"email": body.email}):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists",
+        )
+
+    user_doc = {
+        "name": body.name,
+        "email": body.email,
+        "password": hash_password(body.password),
+        "current_stage": body.current_stage,
+        "target_career": body.target_career,
+    }
+    db.users.insert_one(user_doc)
+
+    return {"message": "Account created successfully"}
+
+@router.post("/login", response_model=TokenResponse)
+def login(body: UserLogin):
+    """Authenticate a user and return a JWT access token.
+
+    - Verifies email exists.
+    - Verifies bcrypt password hash.
+    - Returns a signed JWT with the email as the subject claim.
+    """
+    db = get_db()
+    user = db.users.find_one({"email": body.email})
+
+    if user is None or not verify_password(body.password, user["password"]):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token = create_access_token(data={"sub": user["email"]})
+    return TokenResponse(access_token=token)
+
+@router.get("/profile", response_model=UserProfileResponse)
+def get_profile(current_user: dict = Depends(get_current_user)):
+    """Return the authenticated user's profile (password excluded)."""
+    return UserProfileResponse(
+        id=str(current_user["_id"]),
+        name=current_user["name"],
+        email=current_user["email"],
+        current_stage=current_user.get("current_stage"),
+        target_career=current_user.get("target_career"),
+    )
+
+@router.patch("/profile", response_model=UserProfileResponse)
+def update_profile(body: UserProfileUpdate, current_user: dict = Depends(get_current_user)):
+    """Update editable profile fields for the authenticated user."""
+    db = get_db()
+
+    updates: dict[str, str] = {}
+    if body.current_stage is not None:
+        cleaned_stage = body.current_stage.strip()
+        if not cleaned_stage:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Current stage cannot be empty",
+            )
+        updates["current_stage"] = cleaned_stage
+
+    if body.target_career is not None:
+        cleaned_target = body.target_career.strip()
+        if not cleaned_target:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Target career cannot be empty",
+            )
+        updates["target_career"] = cleaned_target
+
+    if not updates:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No profile fields provided for update",
+        )
+
+    db.users.update_one({"_id": current_user["_id"]}, {"$set": updates})
+
+    updated = db.users.find_one({"_id": current_user["_id"]})
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    return UserProfileResponse(
+        id=str(updated["_id"]),
+        name=updated["name"],
+        email=updated["email"],
+        current_stage=updated.get("current_stage"),
+        target_career=updated.get("target_career"),
+    )
+```
+
+backend/app/routes/progress.py
+------------------------------
+```python
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
+
+from app.routes.auth import get_current_user
+from app.models.progress_model import ProgressList, ProgressEntry
+from app.services.progress_service import get_user_progress, toggle_task
+
+router = APIRouter(prefix="/api", tags=["Progress"])
+
+@router.get("/progress", response_model=ProgressList)
+def list_progress(current_user: dict = Depends(get_current_user)):
+    """Return every career-plan snapshot belonging to the authenticated user."""
+    user_id = str(current_user["_id"])
+    entries = get_user_progress(user_id)
+    return ProgressList(
+        count=len(entries),
+        entries=[ProgressEntry(**e) for e in entries],
+    )
+
+class ToggleTaskBody(BaseModel):
+    task_id: int
+    done: bool
+
+@router.patch("/progress/{plan_id}/task")
+def toggle_task_endpoint(
+    plan_id: str,
+    body: ToggleTaskBody,
+    current_user: dict = Depends(get_current_user),
+):
+    """Toggle a single roadmap task's completion state."""
+    updated = toggle_task(plan_id, body.task_id, body.done)
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Plan or task not found",
+        )
+    return {"ok": True}
+```
+
+Data Models
+===========
+
+backend/app/models/request_models.py
+------------------------------------
+```python
+from pydantic import BaseModel, Field
+
+class ProfileInput(BaseModel):
+    """User profile submitted for career readiness prediction."""
+    gpa: float = Field(..., ge=5, le=10, description="Grade Point Average (5-10)")
+    internships: int = Field(..., ge=0, le=4, description="Number of internships (0-4)")
+    projects: int = Field(..., ge=0, le=6, description="Number of projects (0-6)")
+    certifications: int = Field(..., ge=0, le=5, description="Number of certifications (0-5)")
+    soft_skills_score: float = Field(..., ge=1, le=10, description="Soft skills score (1-10)")
+    networking_score: float = Field(..., ge=1, le=10, description="Networking score (1-10)")
+
+class AssessmentInput(BaseModel):
+    """Input submitted from the frontend assessment workflow."""
+
+    education_level: str = Field(..., min_length=2, max_length=50)
+    programming_skill: int = Field(..., ge=1, le=5)
+    math_skill: int = Field(..., ge=1, le=5)
+    problem_solving: int = Field(..., ge=1, le=5)
+    projects: int = Field(..., ge=0, le=20)
+    experience: float = Field(..., ge=0, le=20)
+    system_design: int = Field(..., ge=1, le=5)
+    communication: int = Field(..., ge=1, le=5)
+    ai_knowledge: int = Field(..., ge=1, le=5)
+    target_role: str = Field(..., min_length=2, max_length=100)
+
+class SkillGap(BaseModel):
+    skill: str
+    current_value: float
+    threshold: float
+    priority: str
+    suggestion: str
+
+class SkillAnalysisResult(BaseModel):
+    weak_skills: list[SkillGap]
+    improvement_priority: str
+
+class WeeklyPlan(BaseModel):
+    week_1: list[str]
+    week_2: list[str]
+    week_3: list[str]
+    week_4: list[str]
+
+class RoadmapResult(BaseModel):
+    readiness_level: str
+    weak_skills: list[str]
+    recommended_topics: list[str]
+    improvement_plan: WeeklyPlan
+
+class CareerRecommendation(BaseModel):
+    recommended_roles: list[str]
+    reasoning: list[str]
+
+class AssessmentSkillGap(BaseModel):
+    skill: str
+    current_level: str
+    required_level: str
+    recommendation: str
+
+class CareerPlanSkillInput(BaseModel):
+    gpa: float
+    internships: int
+    projects: int
+    certifications: int
+    soft_skills_score: float
+    networking_score: float
+
+class AssessmentResponse(BaseModel):
+    target_role: str
+    education_level: str
+    readiness_score: float = Field(..., ge=0, le=100)
+    career_level: str
+    strengths: list[str]
+    skill_gaps: list[AssessmentSkillGap]
+    radar_chart: dict[str, float]
+    skill_graph: dict[str, float]
+    recommended_focus_areas: list[str]
+    summary: str
+    career_plan_inputs: CareerPlanSkillInput
+
+class PredictionResponse(BaseModel):
+    """Full prediction response returned by POST /api/predict."""
+    career_readiness: str
+    confidence: float
+    skill_analysis: SkillAnalysisResult
+    roadmap: RoadmapResult
+    career_recommendations: CareerRecommendation
+```
+
+backend/app/models/user_model.py
+--------------------------------
+```python
+from __future__ import annotations
+
+from typing import Optional
+from pydantic import BaseModel, EmailStr, Field
+
+class UserSignup(BaseModel):
+    """Payload for POST /signup."""
+    name: str = Field(..., min_length=1, max_length=100)
+    email: EmailStr
+    password: str = Field(..., min_length=6, max_length=128)
+    current_stage: Optional[str] = Field(
+        None,
+        description="e.g. 'Class 10', 'Undergraduate', 'Working Professional'",
+    )
+    target_career: Optional[str] = Field(
+        None,
+        description="e.g. 'Software Engineer', 'Doctor'",
+    )
+
+class UserLogin(BaseModel):
+    """Payload for POST /login."""
+    email: EmailStr
+    password: str
+
+class TokenResponse(BaseModel):
+    """Returned after successful login."""
+    access_token: str
+    token_type: str = "bearer"
+
+class UserProfileResponse(BaseModel):
+    """Returned by GET /profile (no password)."""
+    id: str
+    name: str
+    email: str
+    current_stage: Optional[str] = None
+    target_career: Optional[str] = None
+
+class UserProfileUpdate(BaseModel):
+    """Payload for PATCH /profile."""
+    current_stage: Optional[str] = Field(None, min_length=1, max_length=100)
+    target_career: Optional[str] = Field(None, min_length=1, max_length=100)
+```
+
+backend/app/models/user_profile.py
+----------------------------------
+```python
+from __future__ import annotations
+
+from typing import Optional
+
+from pydantic import BaseModel, Field
+
+class SkillMetrics(BaseModel):
+    """Optional technical / soft-skill scores.
+
+    Only relevant for college students and professionals where the ML
+    readiness model can run.  All fields are optional - the system
+    gracefully skips prediction when they are absent.
+    """
+    gpa: Optional[float] = Field(None, ge=0, le=10, description="Grade Point Average (0-10)")
+    internships: Optional[int] = Field(None, ge=0, le=10, description="Number of internships")
+    projects: Optional[int] = Field(None, ge=0, le=10, description="Number of projects")
+    certifications: Optional[int] = Field(None, ge=0, le=10, description="Number of certifications")
+    soft_skills_score: Optional[float] = Field(None, ge=1, le=10, description="Soft skills score (1-10)")
+    networking_score: Optional[float] = Field(None, ge=1, le=10, description="Networking score (1-10)")
+
+class UserProfile(BaseModel):
+    """Top-level input for the career plan endpoint."""
+    current_stage: str = Field(
+        ...,
+        description="User's current stage, e.g. 'Class 10', 'Undergraduate', 'Working Professional'",
+    )
+    target_career: str = Field(
+        ...,
+        description="Target career goal, e.g. 'IAS', 'Software Engineer', 'Chef', 'Lawyer'",
+    )
+    current_role: Optional[str] = Field(
+        None,
+        description="Current job title / role for working professionals, e.g. 'System Engineer at Infosys'",
+    )
+    skills: Optional[SkillMetrics] = Field(
+        None,
+        description="Optional skill metrics for ML-based readiness prediction",
+    )
+
+class StageStep(BaseModel):
+    """A single stage on the career path."""
+    stage: str
+    label: str
+    tasks: list[str]
+    status: str = Field(
+        ...,
+        description="'completed' | 'current' | 'upcoming'",
+    )
+
+class SkillGapItem(BaseModel):
+    """One identified skill gap."""
+    skill: str
+    status: str
+    priority: str
+    recommendation: str
+
+class ReadinessPrediction(BaseModel):
+    """ML-based readiness prediction (only for eligible users)."""
+    career_readiness: str
+    confidence: float
+
+class CareerPlanResponse(BaseModel):
+    """Full response from the career plan pipeline."""
+    target_career: str
+    current_stage: str
+    current_role: Optional[str] = None
+    is_custom_career: bool = False
+    career_path: list[StageStep]
+    next_steps: list[str]
+    skill_gaps: list[SkillGapItem]
+    readiness: Optional[ReadinessPrediction] = None
+    roadmap: dict
+```
+
+backend/app/models/progress_model.py
+------------------------------------
+```python
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Optional
+
+from pydantic import BaseModel, Field
+
+class TaskItem(BaseModel):
+    """A single to-do task from the roadmap."""
+    id: int
+    phase: str
+    action: str
+    done: bool = False
+    estimated_days: int = 7
+
+class ProgressEntry(BaseModel):
+    """Single progress record returned by GET /progress."""
+    id: str
+    target_career: str
+    current_stage: str
+    current_role: Optional[str] = None
+    is_custom_career: bool = False
+    roadmap_summary: Optional[str] = None
+    tasks: list[TaskItem] = []
+    created_at: datetime
+
+class ProgressList(BaseModel):
+    """Wrapper returned by GET /progress."""
+    count: int
+    entries: list[ProgressEntry]
+```
+
+Core Services
+=============
+
+backend/app/services/auth_service.py
+------------------------------------
+```python
+from __future__ import annotations
+
+import os
+from datetime import datetime, timedelta, timezone
+
+from passlib.context import CryptContext
+from jose import JWTError, jwt
+
+SECRET_KEY: str = os.getenv("JWT_SECRET", "change-me-before-production")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60  # 1 hour
+
+_pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def hash_password(plain: str) -> str:
+    """Return the bcrypt hash of *plain*."""
+    return _pwd_ctx.hash(plain)
+
+def verify_password(plain: str, hashed: str) -> bool:
+    """Return True if *plain* matches *hashed*."""
+    return _pwd_ctx.verify(plain, hashed)
+
+def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
+    """Create a signed JWT containing *data* with an expiry claim."""
+    to_encode = data.copy()
+    expire = datetime.now(timezone.utc) + (
+        expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def decode_access_token(token: str) -> dict | None:
+    """Decode and verify a JWT.  Returns the payload dict or None on failure."""
+    try:
+        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        return None
+```
+
+backend/app/services/prediction_service.py
+------------------------------------------
+```python
+import pandas as pd
+from app.ml.model_loader import get_model, FEATURE_ORDER
+
+def predict(profile: dict) -> dict:
+    """Run the ML pipeline on a user profile.
+
+    Parameters
+    ----------
+    profile : dict
+        Keys must include all items in FEATURE_ORDER.
+
+    Returns
+    -------
+    dict
+        {
+            "career_readiness": "Ready" | "Not Ready",
+            "confidence": float,       # 0-1
+            "prediction_raw": int,     # 0 or 1
+        }
+
+    Raises
+    ------
+    RuntimeError
+        If the model has not been loaded yet.
+    """
+    pipeline = get_model()
+    if pipeline is None:
+        raise RuntimeError("ML model is not loaded")
+
+    row = pd.DataFrame(
+        [[profile[f] for f in FEATURE_ORDER]],
+        columns=FEATURE_ORDER,
+    )
+
+    prediction = int(pipeline.predict(row)[0])
+    probabilities = pipeline.predict_proba(row)[0]
+    confidence = round(float(probabilities[prediction]), 4)
+
+    return {
+        "career_readiness": "Ready" if prediction == 1 else "Not Ready",
+        "confidence": confidence,
+        "prediction_raw": prediction,
+    }
+```
+
+backend/app/services/skill_analysis_service.py
+----------------------------------------------
+```python
+GAP_RULES = [
+    {
+        "field": "gpa",
+        "threshold": 7,
+        "skill": "Academics (GPA)",
+        "priority": "high",
+        "suggestion": "Focus on core subject revision and targeted practice tests",
+    },
+    {
+        "field": "internships",
+        "threshold": 1,
+        "skill": "Industry Experience (Internships)",
+        "priority": "high",
+        "suggestion": "Start applying for internships and build industry exposure",
+    },
+    {
+        "field": "projects",
+        "threshold": 3,
+        "skill": "Technical Projects & DSA",
+        "priority": "high",
+        "suggestion": "Practice DSA regularly and build portfolio projects on GitHub",
+    },
+    {
+        "field": "certifications",
+        "threshold": 2,
+        "skill": "Certifications",
+        "priority": "medium",
+        "suggestion": "Earn at least one relevant certification in your domain",
+    },
+    {
+        "field": "soft_skills_score",
+        "threshold": 6,
+        "skill": "Soft Skills & Communication",
+        "priority": "medium",
+        "suggestion": "Improve communication through mock interviews and public speaking",
+    },
+    {
+        "field": "networking_score",
+        "threshold": 5,
+        "skill": "Professional Networking",
+        "priority": "medium",
+        "suggestion": "Expand your network via LinkedIn, meetups, and informational interviews",
+    },
+]
+
+def analyze_skill_gaps(profile: dict) -> dict:
+    """Identify skill gaps and return them with priorities.
+
+    Returns
+    -------
+    dict
+        {
+            "weak_skills": [ { skill, current_value, threshold, priority, suggestion }, ... ],
+            "improvement_priority": "high" | "medium" | "low",
+        }
+    """
+    weak_skills: list[dict] = []
+
+    for rule in GAP_RULES:
+        value = profile.get(rule["field"])
+        if value is not None and value < rule["threshold"]:
+            weak_skills.append({
+                "skill": rule["skill"],
+                "current_value": value,
+                "threshold": rule["threshold"],
+                "priority": rule["priority"],
+                "suggestion": rule["suggestion"],
+            })
+
+    if any(s["priority"] == "high" for s in weak_skills):
+        priority = "high"
+    elif any(s["priority"] == "medium" for s in weak_skills):
+        priority = "medium"
+    else:
+        priority = "low"
+
+    return {"weak_skills": weak_skills, "improvement_priority": priority}
+```
+
+backend/app/services/roadmap_service.py
+---------------------------------------
+```python
+WEAKNESS_RULES = [
+    {
+        "field": "gpa",
+        "check": lambda v: v < 7,
+        "skill": "Academics (GPA)",
+        "topics": ["Core subject revision", "Practice previous year papers", "Study groups"],
+        "plan": [
+            "Identify weakest subjects and gather study resources",
+            "Complete 2 mock tests per subject",
+            "Revise key topics and solve problem sets",
+            "Take a full-length practice exam and review mistakes",
+        ],
+    },
+    {
+        "field": "internships",
+        "check": lambda v: v < 2,
+        "skill": "Industry Experience (Internships)",
+        "topics": ["Apply to internships on job portals", "Cold emailing", "LinkedIn outreach"],
+        "plan": [
+            "Update resume and LinkedIn profile",
+            "Shortlist 15 companies and apply",
+            "Follow up on applications and network with recruiters",
+            "Prepare for and attend interviews",
+        ],
+    },
+    {
+        "field": "projects",
+        "check": lambda v: v < 3,
+        "skill": "Technical Projects & DSA",
+        "topics": ["Data Structures & Algorithms", "Build portfolio projects", "Open-source contributions"],
+        "plan": [
+            "Pick a project idea and set up the repo",
+            "Solve 20 DSA problems (arrays, strings, trees)",
+            "Complete MVP of the project and push to GitHub",
+            "Add documentation, tests, and deploy a demo",
+        ],
+    },
+    {
+        "field": "certifications",
+        "check": lambda v: v < 2,
+        "skill": "Certifications",
+        "topics": ["Cloud certifications (AWS/Azure)", "Domain-specific courses", "Coursera / Udemy courses"],
+        "plan": [
+            "Research relevant certifications for your target role",
+            "Enroll and complete 50% of course material",
+            "Finish remaining material and take practice tests",
+            "Attempt the certification exam",
+        ],
+    },
+    {
+        "field": "soft_skills_score",
+        "check": lambda v: v < 6,
+        "skill": "Soft Skills & Communication",
+        "topics": ["Public speaking practice", "Technical writing", "Mock interviews"],
+        "plan": [
+            "Join a speaking club or practice elevator pitches",
+            "Write 2 blog posts or technical articles",
+            "Conduct 3 mock interviews with peers",
+            "Record and review a presentation for self-feedback",
+        ],
+    },
+    {
+        "field": "networking_score",
+        "check": lambda v: v < 5,
+        "skill": "Professional Networking",
+        "topics": ["LinkedIn networking", "Attend tech meetups", "Informational interviews"],
+        "plan": [
+            "Optimize LinkedIn headline, summary, and skills",
+            "Connect with 20 professionals in your target field",
+            "Attend 1-2 virtual or local tech events",
+            "Schedule 2 informational interviews and follow up",
+        ],
+    },
+]
+
+def _readiness_level(prediction: str, confidence: float) -> str:
+    """Map prediction + confidence to a human-readable readiness level."""
+    if prediction == "Ready" and confidence >= 0.85:
+        return "High"
+    if prediction == "Ready":
+        return "Moderate"
+    return "Low"
+
+def generate_roadmap(profile: dict, career_readiness: str, confidence: float) -> dict:
+    """Build a personalised 4-week improvement roadmap.
+
+    Returns
+    -------
+    dict
+        {
+            "readiness_level": str,
+            "weak_skills": [str, ...],
+            "recommended_topics": [str, ...],
+            "improvement_plan": { "week_1": [...], ... "week_4": [...] },
+        }
+    """
+    weak_skills: list[str] = []
+    recommended_topics: list[str] = []
+    plan: dict[str, list[str]] = {"week_1": [], "week_2": [], "week_3": [], "week_4": []}
+
+    for rule in WEAKNESS_RULES:
+        value = profile.get(rule["field"])
+        if value is not None and rule["check"](value):
+            weak_skills.append(rule["skill"])
+            recommended_topics.extend(rule["topics"])
+            for idx, task in enumerate(rule["plan"]):
+                plan[f"week_{idx + 1}"].append(task)
+
+    if weak_skills:
+        plan["week_4"].append("Review all progress and do a final mock interview")
+
+    return {
+        "readiness_level": _readiness_level(career_readiness, confidence),
+        "weak_skills": weak_skills,
+        "recommended_topics": recommended_topics,
+        "improvement_plan": plan,
+    }
+```
+
+backend/app/services/career_recommendation_service.py
+-----------------------------------------------------
+```python
+ROLE_RULES = [
+    {
+        "role": "Software Engineer",
+        "match": lambda p: p.get("projects", 0) >= 3 and p.get("certifications", 0) >= 1,
+        "reasoning": "Strong project portfolio and technical certifications indicate hands-on coding ability",
+    },
+    {
+        "role": "Data Scientist",
+        "match": lambda p: p.get("gpa", 0) >= 7 and p.get("projects", 0) >= 2 and p.get("certifications", 0) >= 1,
+        "reasoning": "High academic performance combined with project experience suits analytical and research roles",
+    },
+    {
+        "role": "DevOps Engineer",
+        "match": lambda p: p.get("networking_score", 0) >= 6 and p.get("projects", 0) >= 2 and p.get("certifications", 0) >= 2,
+        "reasoning": "Good networking awareness and multiple certifications align with infrastructure and operations roles",
+    },
+    {
+        "role": "Product Manager",
+        "match": lambda p: p.get("soft_skills_score", 0) >= 7 and p.get("networking_score", 0) >= 6,
+        "reasoning": "Strong communication and networking skills are essential for leading cross-functional product teams",
+    },
+    {
+        "role": "Frontend Developer",
+        "match": lambda p: p.get("projects", 0) >= 3 and p.get("soft_skills_score", 0) >= 5,
+        "reasoning": "Solid project experience paired with decent communication skills suits user-facing development work",
+    },
+    {
+        "role": "Cloud / Platform Engineer",
+        "match": lambda p: p.get("certifications", 0) >= 2 and p.get("networking_score", 0) >= 5,
+        "reasoning": "Multiple certifications and networking knowledge point toward cloud infrastructure roles",
+    },
+    {
+        "role": "Technical Consultant",
+        "match": lambda p: p.get("soft_skills_score", 0) >= 6 and p.get("internships", 0) >= 2,
+        "reasoning": "Industry exposure through internships combined with strong communication fits consulting roles",
+    },
+    {
+        "role": "QA / Test Engineer",
+        "match": lambda p: p.get("gpa", 0) >= 6 and p.get("projects", 0) >= 1 and p.get("certifications", 0) >= 1,
+        "reasoning": "Solid fundamentals with some project and certification experience suit quality assurance roles",
+    },
+]
+
+def recommend_career_path(profile: dict) -> dict:
+    """Recommend career roles based on a student's profile strengths.
+
+    Returns
+    -------
+    dict
+        { "recommended_roles": [str, ...], "reasoning": [str, ...] }
+    """
+    recommended_roles: list[str] = []
+    reasoning: list[str] = []
+
+    for rule in ROLE_RULES:
+        if rule["match"](profile):
+            recommended_roles.append(rule["role"])
+            reasoning.append(rule["reasoning"])
+
+    if not recommended_roles:
+        recommended_roles.append("Explore Internships & Skill Building")
+        reasoning.append(
+            "Your profile does not yet strongly match a specific role - "
+            "focus on building projects, earning certifications, and gaining experience"
+        )
+
+    return {"recommended_roles": recommended_roles, "reasoning": reasoning}
+```
+
+backend/app/services/career_gap_analysis_service.py
+---------------------------------------------------
+```python
+from __future__ import annotations
+
+from typing import Optional
+
+STAGE_RANK: dict[str, int] = {
+    "class 10": 0,
+    "class 11-12": 1,
+    "undergraduate": 2,
+    "graduate": 3,
+    "working professional": 4,
+}
+
+_ALIASES: dict[str, str] = {
+    "10th": "class 10",
+    "class 10th": "class 10",
+    "12th": "class 11-12",
+    "class 12": "class 11-12",
+    "class 12th": "class 11-12",
+    "11th-12th": "class 11-12",
+    "ug": "undergraduate",
+    "bachelors": "undergraduate",
+    "bachelor": "undergraduate",
+    "b.tech": "undergraduate",
+    "btech": "undergraduate",
+    "pg": "graduate",
+    "postgraduate": "graduate",
+    "masters": "graduate",
+    "master": "graduate",
+    "m.tech": "graduate",
+    "mtech": "graduate",
+    "mba": "graduate",
+    "professional": "working professional",
+    "employed": "working professional",
+    "working": "working professional",
+}
+
+def _normalise_stage(stage: str) -> str:
+    """Map a user-supplied stage string to a canonical stage key."""
+    key = stage.strip().lower()
+    key = " ".join(key.replace("-", " ").replace("_", " ").split())
+    if key in STAGE_RANK:
+        return key
+
+    alias = _ALIASES.get(key)
+    if alias:
+        return alias
+
+    if "working professional" in key or "professional" in key or "employed" in key:
+        return "working professional"
+
+    return key
+
+def _rank_of(stage: str) -> int:
+    """Return the numeric rank of a canonical stage, defaulting to -1."""
+    return STAGE_RANK.get(_normalise_stage(stage), -1)
+
+_SCHOOL_GAPS = [
+    {
+        "skill": "Academic Foundation",
+        "check": lambda s: s.get("gpa") is not None and s["gpa"] < 7,
+        "priority": "high",
+        "recommendation": "Strengthen core subjects - aim for 70%+ marks",
+    },
+    {
+        "skill": "Basic Programming",
+        "check": lambda s: s.get("projects") is not None and s["projects"] < 1,
+        "priority": "medium",
+        "recommendation": "Start learning a beginner-friendly language (Python / Scratch)",
+    },
+]
+
+_COLLEGE_GAPS = [
+    {
+        "skill": "Academics (GPA)",
+        "check": lambda s: s.get("gpa") is not None and s["gpa"] < 7,
+        "priority": "high",
+        "recommendation": "Focus on core subject revision and practice tests",
+    },
+    {
+        "skill": "Industry Experience",
+        "check": lambda s: s.get("internships") is not None and s["internships"] < 1,
+        "priority": "high",
+        "recommendation": "Apply for internships to gain practical exposure",
+    },
+    {
+        "skill": "Technical Projects",
+        "check": lambda s: s.get("projects") is not None and s["projects"] < 3,
+        "priority": "high",
+        "recommendation": "Build portfolio projects and contribute to open-source",
+    },
+    {
+        "skill": "Certifications",
+        "check": lambda s: s.get("certifications") is not None and s["certifications"] < 2,
+        "priority": "medium",
+        "recommendation": "Earn at least one relevant industry certification",
+    },
+    {
+        "skill": "Soft Skills",
+        "check": lambda s: s.get("soft_skills_score") is not None and s["soft_skills_score"] < 6,
+        "priority": "medium",
+        "recommendation": "Practice communication through mock interviews and presentations",
+    },
+    {
+        "skill": "Professional Networking",
+        "check": lambda s: s.get("networking_score") is not None and s["networking_score"] < 5,
+        "priority": "medium",
+        "recommendation": "Expand your network via LinkedIn, meetups, and events",
+    },
+]
+
+_PROFESSIONAL_GAPS = [
+    {
+        "skill": "Leadership & Mentoring",
+        "check": lambda _: True,  # always suggest for professionals
+        "priority": "medium",
+        "recommendation": "Lead projects and mentor junior team members",
+    },
+    {
+        "skill": "Specialisation Depth",
+        "check": lambda s: s.get("certifications") is not None and s["certifications"] < 3,
+        "priority": "high",
+        "recommendation": "Pursue advanced certifications or a research-oriented degree",
+    },
+    {
+        "skill": "Industry Visibility",
+        "check": lambda s: s.get("networking_score") is not None and s["networking_score"] < 7,
+        "priority": "medium",
+        "recommendation": "Publish articles, speak at conferences, grow professional brand",
+    },
+]
+
+def _select_gap_rules(stage: str) -> list[dict]:
+    """Pick the right set of gap rules based on the user's stage."""
+    rank = _rank_of(stage)
+    if rank <= 1:
+        return _SCHOOL_GAPS
+    if rank <= 2:
+        return _COLLEGE_GAPS
+    return _PROFESSIONAL_GAPS
+
+def annotate_career_path(stages: list[dict], current_stage: str) -> list[dict]:
+    """Add a 'status' field to each career-path stage.
+
+    Returns a new list (does not mutate the input) where each stage dict
+    has an additional ``status`` key set to one of:
+    ``'completed'``, ``'current'``, or ``'upcoming'``.
+    """
+    user_rank = _rank_of(current_stage)
+    annotated: list[dict] = []
+
+    for entry in stages:
+        stage_rank = _rank_of(entry["stage"])
+        if stage_rank < user_rank:
+            status = "completed"
+        elif stage_rank == user_rank:
+            status = "current"
+        else:
+            status = "upcoming"
+        annotated.append({**entry, "status": status})
+
+    return annotated
+
+def compute_next_steps(stages: list[dict], current_stage: str) -> list[str]:
+    """Return the tasks for the current and the next upcoming stage.
+
+    This gives the user a concrete list of what to do right now and
+    what to prepare for next.
+    """
+    user_rank = _rank_of(current_stage)
+    steps: list[str] = []
+
+    for entry in stages:
+        stage_rank = _rank_of(entry["stage"])
+        if stage_rank == user_rank:
+            steps.extend(entry.get("tasks", []))
+        elif stage_rank == user_rank + 1:
+            steps.extend(f"[Next Stage] {t}" for t in entry.get("tasks", []))
+
+    return steps
+
+def analyze_skill_gaps(
+    current_stage: str,
+    skills: Optional[dict],
+) -> list[dict]:
+    """Run stage-appropriate gap analysis on the user's skills.
+
+    Parameters
+    ----------
+    current_stage : str
+        The user's current education / career stage.
+    skills : dict | None
+        Skill metrics dict (gpa, internships, projects, etc.).
+        When ``None``, returns generic gaps for the stage.
+
+    Returns
+    -------
+    list[dict]
+        Each item: ``{ skill, status, priority, recommendation }``
+    """
+    if skills is None:
+        skills = {}
+
+    rules = _select_gap_rules(current_stage)
+    gaps: list[dict] = []
+
+    for rule in rules:
+        if rule["check"](skills):
+            gaps.append({
+                "skill": rule["skill"],
+                "status": "gap",
+                "priority": rule["priority"],
+                "recommendation": rule["recommendation"],
+            })
+
+    return gaps
+```
+
+backend/app/services/career_path_service.py
+-------------------------------------------
+```python
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Optional
+
+_DATA_FILE = Path(__file__).resolve().parent.parent / "data" / "career_paths.json"
+
+_cache: Optional[dict] = None
+
+def _load() -> dict:
+    """Load career paths from disk and populate the cache."""
+    global _cache
+    if _cache is None:
+        with open(_DATA_FILE, encoding="utf-8") as fh:
+            _cache = json.load(fh)
+        print(f"[career_path_service] Loaded {len(_cache)} career paths")
+    return _cache
+
+def list_careers() -> list[str]:
+    """Return all available career keys (e.g. ['IAS', 'Software Engineer', ...])."""
+    return list(_load().keys())
+
+def get_career_path(career: str) -> Optional[dict]:
+    """Return the full career path dict for *career*, or None if not found.
+
+    The lookup is case-insensitive and strips extra whitespace so that
+    user input like "software engineer" or " Data Scientist " still matches.
+    """
+    data = _load()
+
+    if career in data:
+        return data[career]
+
+    normalised = career.strip().lower()
+    for key, value in data.items():
+        if key.lower() == normalised:
+            return value
+
+    return None
+
+def get_stages_for_career(career: str) -> list[dict]:
+    """Return the ordered list of stages for a career, or empty list."""
+    path = get_career_path(career)
+    if path is None:
+        return []
+    return path.get("stages", [])
+```
+
+backend/app/services/career_roadmap_service.py
+----------------------------------------------
+```python
+from __future__ import annotations
+
+from typing import Optional
+
+def generate_career_roadmap(
+    career_title: str,
+    annotated_path: list[dict],
+    skill_gaps: list[dict],
+    next_steps: list[str],
+    readiness: Optional[dict],
+    current_role: Optional[str] = None,
+) -> dict:
+    """Build a structured, actionable roadmap for the user.
+
+    Returns
+    -------
+    dict
+        { "summary": str, "phases": [ { "phase": str, "actions": [str] }, ... ] }
+    """
+
+    high_gaps = [g for g in skill_gaps if g["priority"] == "high"]
+    medium_gaps = [g for g in skill_gaps if g["priority"] == "medium"]
+
+    phase1_actions: list[str] = []
+    for gap in high_gaps:
+        phase1_actions.append(f"[HIGH PRIORITY] {gap['recommendation']}")
+    for gap in medium_gaps:
+        phase1_actions.append(f"[MEDIUM] {gap['recommendation']}")
+    if not phase1_actions:
+        phase1_actions.append("No critical skill gaps detected - maintain current progress and keep building your portfolio")
+
+    current_tasks = [s for s in next_steps if not s.startswith("[Next Stage]")]
+    phase2_actions = current_tasks if current_tasks else ["Continue excelling at your current stage"]
+    if current_role:
+        phase2_actions.insert(0, f"Leverage your experience as {current_role} to strengthen relevant skills")
+
+    future_tasks = [s.replace("[Next Stage] ", "") for s in next_steps if s.startswith("[Next Stage]")]
+    phase3_actions = future_tasks if future_tasks else ["You are at or beyond the final stage - focus on mastery and specialisation"]
+    phase3_actions.append(f"Research what top professionals in {career_title} did at this stage")
+    phase3_actions.append(f"Identify mentors or communities in the {career_title} field")
+
+    remaining = [entry for entry in annotated_path if entry["status"] == "upcoming"]
+    phase4_actions: list[str] = []
+    for entry in remaining[1:]:
+        phase4_actions.extend(entry.get("tasks", []))
+    if not phase4_actions:
+        phase4_actions.append(f"Continue deepening your expertise toward becoming a {career_title}")
+    phase4_actions.append(f"Build a strong professional network in the {career_title} domain")
+    phase4_actions.append("Set annual milestones to track your growth and revisit this plan regularly")
+
+    stages_remaining = len([e for e in annotated_path if e["status"] in ("current", "upcoming")])
+    summary = f"You are {stages_remaining} stage(s) away from your goal of becoming a {career_title}. "
+    if current_role:
+        summary += f"Your current role as {current_role} gives you a practical foundation to build on. "
+    if readiness:
+        summary += (
+            f"ML readiness assessment: {readiness['career_readiness']} "
+            f"(confidence {readiness['confidence']:.0%}). "
+        )
+    if high_gaps:
+        summary += f"You have {len(high_gaps)} high-priority gap(s) to address first."
+    else:
+        summary += "No critical gaps - keep up the momentum!"
+
+    return {
+        "summary": summary,
+        "phases": [
+            {"phase": "Phase 1 - Address Skill Gaps", "actions": phase1_actions},
+            {"phase": "Phase 2 - Current Stage Actions", "actions": phase2_actions},
+            {"phase": "Phase 3 - Prepare for Next Stage", "actions": phase3_actions},
+            {"phase": "Phase 4 - Long-Term Growth & Milestones", "actions": phase4_actions},
+        ],
+    }
+```
+
+backend/app/services/custom_career_service.py
+---------------------------------------------
+```python
+from __future__ import annotations
+
+from typing import Optional
+
+def _build_generic_stages(career: str) -> list[dict]:
+    """Build a 5-stage generic career path for an arbitrary career."""
+    return [
+        {
+            "stage": "Class 10",
+            "label": "Foundation - Secondary School",
+            "tasks": [
+                "Build strong academics across all core subjects",
+                f"Research what a career as a {career} involves",
+                "Identify the required stream / subjects for Class 11-12",
+                "Start developing relevant foundational skills early",
+            ],
+        },
+        {
+            "stage": "Class 11-12",
+            "label": f"Stream Selection for {career}",
+            "tasks": [
+                f"Choose the stream most relevant to becoming a {career}",
+                "Excel in board exams - strong marks widen options",
+                f"Explore introductory courses or books related to {career}",
+                "Prepare for relevant entrance examinations",
+            ],
+        },
+        {
+            "stage": "Undergraduate",
+            "label": f"Degree & Skill Building for {career}",
+            "tasks": [
+                f"Pursue a degree aligned with {career} requirements",
+                "Complete internships or practical training in the field",
+                f"Build a portfolio of projects / experiences related to {career}",
+                "Earn relevant certifications or attend workshops",
+                "Network with professionals already working in this field",
+                "Join communities, clubs, or forums related to the field",
+            ],
+        },
+        {
+            "stage": "Graduate",
+            "label": f"Advanced Preparation / Entry into {career}",
+            "tasks": [
+                f"Pursue higher education or professional exams if required for {career}",
+                "Apply for entry-level positions or apprenticeships",
+                "Build a strong professional profile (LinkedIn, portfolio)",
+                f"Gain hands-on experience through real-world {career} work",
+            ],
+        },
+        {
+            "stage": "Working Professional",
+            "label": f"Career Growth as {career}",
+            "tasks": [
+                f"Excel in your current role and seek promotions toward senior {career} positions",
+                "Pursue advanced certifications or specialisations",
+                "Mentor others and build leadership skills",
+                "Expand your professional network and industry visibility",
+                "Stay current with industry trends and continuous learning",
+            ],
+        },
+    ]
+
+def build_custom_career_path(career: str) -> dict:
+    """Return a career-path dict in the same shape as career_paths.json entries."""
+    return {
+        "title": career,
+        "description": f"A personalised career path toward becoming a {career}.",
+        "stages": _build_generic_stages(career),
+        "key_skills": [
+            "Domain knowledge",
+            "Communication",
+            "Problem solving",
+            "Networking",
+            "Continuous learning",
+        ],
+    }
+
+def build_professional_roadmap(
+    career: str,
+    current_role: Optional[str],
+    skill_gaps: list[dict],
+) -> dict:
+    """Build an enhanced roadmap for a working professional.
+
+    If ``current_role`` is provided, the roadmap includes a concrete
+    transition plan from that role to the target career.
+    """
+    high_gaps = [g for g in skill_gaps if g["priority"] == "high"]
+    medium_gaps = [g for g in skill_gaps if g["priority"] == "medium"]
+
+    phase1 = []
+    if current_role:
+        phase1.append(f"You are currently working as: {current_role}")
+        phase1.append(f"Identify which skills from your role as {current_role} transfer to {career}")
+        phase1.append("List the gaps between your current responsibilities and the target role")
+    else:
+        phase1.append(f"Audit your current skills and experience relevant to {career}")
+    phase1.append("Research job descriptions and required qualifications for the target role")
+
+    phase2 = []
+    for gap in high_gaps:
+        phase2.append(f"[HIGH PRIORITY] {gap['recommendation']}")
+    for gap in medium_gaps:
+        phase2.append(f"[MEDIUM PRIORITY] {gap['recommendation']}")
+    if not phase2:
+        phase2.append("Your current skill set is strong - focus on domain-specific knowledge")
+    phase2.append(f"Take targeted courses or certifications specifically for {career}")
+
+    phase3 = []
+    if current_role:
+        phase3.append(f"Take on projects at work that align with {career} responsibilities")
+        phase3.append(f"Seek internal transfers or cross-functional roles closer to {career}")
+    phase3.append(f"Build a portfolio demonstrating {career}-relevant work")
+    phase3.append(f"Connect with people already working as {career} for mentorship")
+    phase3.append("Attend industry events, webinars, and conferences")
+
+    phase4 = []
+    if current_role:
+        phase4.append(f"Update your resume to highlight transferable skills from {current_role}")
+    phase4.append(f"Apply for {career} positions - start with roles that value your background")
+    phase4.append("Prepare for domain-specific interviews and assessments")
+    phase4.append(f"Target companies or organisations known for hiring into {career} roles")
+    phase4.append("Negotiate your transition - consider lateral moves if needed")
+
+    role_text = f" from {current_role}" if current_role else ""
+    summary = (
+        f"Transitioning{role_text} to {career}. "
+    )
+    if high_gaps:
+        summary += f"You have {len(high_gaps)} high-priority skill gap(s) to address. "
+    summary += "Follow this phased plan to make the move successfully."
+
+    return {
+        "summary": summary,
+        "phases": [
+            {"phase": "Phase 1 - Assess Your Current Position", "actions": phase1},
+            {"phase": "Phase 2 - Bridge the Skill Gaps", "actions": phase2},
+            {"phase": "Phase 3 - Build Credibility & Network", "actions": phase3},
+            {"phase": "Phase 4 - Make the Career Transition", "actions": phase4},
+        ],
+    }
+```
+
+backend/app/services/assessment_service.py
+------------------------------------------
+```python
+"""Assessment scoring and response shaping."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pandas as pd
+
+from app.ml.assessment_model_loader import (
+    ASSESSMENT_FEATURE_ORDER,
+    get_assessment_model,
+)
+
+_EDUCATION_MAP = {
+    "high school": 1,
+    "bachelor's": 2,
+    "bachelors": 2,
+    "bachelor's degree": 2,
+    "master's": 3,
+    "masters": 3,
+    "master's degree": 3,
+    "phd": 4,
+}
+
+_SKILL_DISPLAY_NAMES = {
+    "programming_skill": "Programming",
+    "math_skill": "Mathematics",
+    "problem_solving": "Problem Solving",
+    "system_design": "System Design",
+    "communication": "Communication",
+    "ai_knowledge": "AI Knowledge",
+    "projects": "Projects",
+    "experience": "Experience",
+    "education_level": "Education",
+}
+
+_REQUIRED_THRESHOLDS = {
+    "programming_skill": 72,
+    "math_skill": 65,
+    "problem_solving": 68,
+    "system_design": 62,
+    "communication": 65,
+    "ai_knowledge": 72,
+    "projects": 60,
+    "experience": 55,
+    "education_level": 50,
+}
+
+_RECOMMENDATIONS = {
+    "programming_skill": "Build one production-style project and practice language fundamentals daily.",
+    "math_skill": "Strengthen probability, statistics, and linear algebra with applied exercises.",
+    "problem_solving": "Work through algorithmic problem sets and break problems into repeatable patterns.",
+    "system_design": "Study scalable system patterns and document design tradeoffs for your projects.",
+    "communication": "Practice explaining technical work clearly through demos, mock interviews, and writing.",
+    "ai_knowledge": "Deepen ML fundamentals, model evaluation, and practical AI system implementation.",
+    "projects": "Increase portfolio depth with end-to-end projects that show measurable impact.",
+    "experience": "Seek internships, freelance work, or collaborative builds to gain delivery experience.",
+    "education_level": "Use structured coursework and certifications to strengthen your theoretical base.",
+}
+
+def _normalise_education(value: str) -> str:
+    return value.strip()
+
+def _education_rank(value: str) -> int:
+    return _EDUCATION_MAP.get(value.strip().lower(), 2)
+
+def _clamp(value: float, lower: float, upper: float) -> float:
+    return max(lower, min(upper, value))
+
+def _heuristic_score(profile: dict[str, Any]) -> float:
+    education_rank = _education_rank(profile["education_level"])
+    score = (
+        (education_rank / 4) * 10
+        + (profile["programming_skill"] / 5) * 18
+        + (profile["math_skill"] / 5) * 12
+        + (profile["problem_solving"] / 5) * 16
+        + (profile["system_design"] / 5) * 12
+        + (profile["communication"] / 5) * 10
+        + (profile["ai_knowledge"] / 5) * 12
+        + (min(profile["projects"], 8) / 8) * 5
+        + (min(profile["experience"], 6) / 6) * 5
+    )
+    return round(_clamp(score, 0, 100), 2)
+
+def _predict_score(profile: dict[str, Any]) -> float:
+    heuristic = _heuristic_score(profile)
+    pipeline = get_assessment_model()
+    if pipeline is None:
+        return heuristic
+
+    row = pd.DataFrame(
+        [[profile[field] for field in ASSESSMENT_FEATURE_ORDER]],
+        columns=ASSESSMENT_FEATURE_ORDER,
+    )
+    predicted = float(pipeline.predict(row)[0])
+    blended = (predicted * 0.7) + (heuristic * 0.3)
+    return round(_clamp(blended, 0, 100), 2)
+
+def _career_level(score: float) -> str:
+    if score >= 80:
+        return "advanced"
+    if score >= 65:
+        return "job-ready"
+    if score >= 45:
+        return "developing"
+    return "beginner"
+
+def _score_to_label(value: float) -> str:
+    if value >= 80:
+        return "Advanced"
+    if value >= 65:
+        return "Strong"
+    if value >= 45:
+        return "Developing"
+    return "Beginner"
+
+def _build_skill_scores(profile: dict[str, Any]) -> dict[str, float]:
+    education_rank = _education_rank(profile["education_level"])
+    scores = {
+        "programming_skill": round((profile["programming_skill"] / 5) * 100, 1),
+        "math_skill": round((profile["math_skill"] / 5) * 100, 1),
+        "problem_solving": round((profile["problem_solving"] / 5) * 100, 1),
+        "system_design": round((profile["system_design"] / 5) * 100, 1),
+        "communication": round((profile["communication"] / 5) * 100, 1),
+        "ai_knowledge": round((profile["ai_knowledge"] / 5) * 100, 1),
+        "projects": round((min(profile["projects"], 8) / 8) * 100, 1),
+        "experience": round((min(profile["experience"], 6) / 6) * 100, 1),
+        "education_level": round((education_rank / 4) * 100, 1),
+    }
+    return scores
+
+def _build_strengths(skill_scores: dict[str, float]) -> list[str]:
+    sorted_scores = sorted(skill_scores.items(), key=lambda item: item[1], reverse=True)
+    strong = [field for field, value in sorted_scores if value >= 70]
+    selected = strong[:3] if strong else [field for field, _ in sorted_scores[:3]]
+    return selected
+
+def _build_skill_gaps(skill_scores: dict[str, float]) -> list[dict[str, str]]:
+    gaps: list[dict[str, str]] = []
+    for field, value in sorted(skill_scores.items(), key=lambda item: item[1]):
+        required = _REQUIRED_THRESHOLDS[field]
+        if value >= required:
+            continue
+        gaps.append({
+            "skill": field,
+            "current_level": _score_to_label(value),
+            "required_level": _score_to_label(required),
+            "recommendation": _RECOMMENDATIONS[field],
+        })
+    return gaps[:5]
+
+def _build_focus_areas(gaps: list[dict[str, str]]) -> list[str]:
+    if not gaps:
+        return ["Maintain momentum with larger projects, stronger networking, and interview preparation."]
+    return [gap["recommendation"] for gap in gaps[:3]]
+
+def _build_summary(score: float, level: str, target_role: str, strengths: list[str], gaps: list[dict[str, str]]) -> str:
+    strength_text = ", ".join(_SKILL_DISPLAY_NAMES[item] for item in strengths[:2])
+    if gaps:
+        gap_text = ", ".join(_SKILL_DISPLAY_NAMES[item["skill"]] for item in gaps[:2])
+        return (
+            f"You are currently {level.replace('-', ' ')} for {target_role} with a readiness score of {score:.0f}/100. "
+            f"Your strongest areas are {strength_text}. Focus next on {gap_text} to improve your profile fastest."
+        )
+    return (
+        f"You are currently {level.replace('-', ' ')} for {target_role} with a readiness score of {score:.0f}/100. "
+        f"Your profile is balanced, with standout strength in {strength_text}."
+    )
+
+def _build_career_plan_inputs(profile: dict[str, Any]) -> dict[str, float | int]:
+    education_rank = _education_rank(profile["education_level"])
+    gpa = 5 + (education_rank * 0.75) + (profile["math_skill"] * 0.35) + (profile["programming_skill"] * 0.2)
+    internships = int(round(min(profile["experience"], 6) / 1.5))
+    certifications = int(round((profile["ai_knowledge"] + profile["system_design"]) / 2.5))
+    networking = ((profile["communication"] * 0.6) + (profile["problem_solving"] * 0.4)) * 2
+
+    return {
+        "gpa": round(_clamp(gpa, 5, 10), 2),
+        "internships": max(0, min(internships, 4)),
+        "projects": max(0, min(int(profile["projects"]), 6)),
+        "certifications": max(0, min(certifications, 5)),
+        "soft_skills_score": round(_clamp(profile["communication"] * 2, 1, 10), 1),
+        "networking_score": round(_clamp(networking, 1, 10), 1),
+    }
+
+def run_assessment(profile: dict[str, Any]) -> dict[str, Any]:
+    """Generate the assessment response consumed by the frontend."""
+    cleaned_profile = {
+        **profile,
+        "education_level": _normalise_education(profile["education_level"]),
+    }
+    readiness_score = _predict_score(cleaned_profile)
+    skill_scores = _build_skill_scores(cleaned_profile)
+    strengths = _build_strengths(skill_scores)
+    gaps = _build_skill_gaps(skill_scores)
+    level = _career_level(readiness_score)
+
+    return {
+        "target_role": cleaned_profile["target_role"],
+        "education_level": cleaned_profile["education_level"],
+        "readiness_score": readiness_score,
+        "career_level": level,
+        "strengths": strengths,
+        "skill_gaps": gaps,
+        "radar_chart": skill_scores,
+        "skill_graph": skill_scores,
+        "recommended_focus_areas": _build_focus_areas(gaps),
+        "summary": _build_summary(readiness_score, level, cleaned_profile["target_role"], strengths, gaps),
+        "career_plan_inputs": _build_career_plan_inputs(cleaned_profile),
+    }
+```
+
+backend/app/services/progress_service.py
+----------------------------------------
+```python
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from bson import ObjectId
+
+from app.database.mongo_connection import get_db
+
+_TIME_KEYWORDS = {
+    "high priority": 30,
+    "medium": 21,
+    "certification": 60,
+    "course": 45,
+    "portfolio": 30,
+    "project": 21,
+    "mentor": 14,
+    "network": 14,
+    "research": 7,
+    "community": 7,
+    "internship": 90,
+    "master": 365,
+    "specialisation": 180,
+    "specialization": 180,
+}
+
+def _estimate_days(action: str, phase: str) -> int:
+    """Estimate days for a task based on keywords."""
+    lower = action.lower()
+    for keyword, days in _TIME_KEYWORDS.items():
+        if keyword in lower:
+            return days
+    if "phase 1" in phase.lower() or "skill gap" in phase.lower():
+        return 30
+    if "phase 2" in phase.lower() or "current" in phase.lower():
+        return 21
+    if "phase 3" in phase.lower() or "next" in phase.lower():
+        return 45
+    if "phase 4" in phase.lower() or "long" in phase.lower():
+        return 60
+    return 14
+
+def _build_tasks(plan: dict) -> list[dict]:
+    """Extract roadmap phases/actions into a flat task list with time estimates."""
+    roadmap = plan.get("roadmap") or {}
+    phases = roadmap.get("phases", [])
+    tasks = []
+    task_id = 0
+    for phase_obj in phases:
+        phase_name = phase_obj.get("phase", "")
+        for action in phase_obj.get("actions", []):
+            tasks.append({
+                "id": task_id,
+                "phase": phase_name,
+                "action": action,
+                "done": False,
+                "estimated_days": _estimate_days(action, phase_name),
+            })
+            task_id += 1
+    return tasks
+
+def save_progress(user_id: str, plan: dict) -> str:
+    """Persist a career plan snapshot linked to *user_id*.
+
+    Returns the inserted document's ``_id`` as a string.
+    """
+    db = get_db()
+    tasks = _build_tasks(plan)
+    doc = {
+        "user_id": user_id,
+        "target_career": plan.get("target_career"),
+        "current_stage": plan.get("current_stage"),
+        "current_role": plan.get("current_role"),
+        "is_custom_career": plan.get("is_custom_career", False),
+        "roadmap_summary": (plan.get("roadmap") or {}).get("summary"),
+        "tasks": tasks,
+        "full_plan": plan,
+        "created_at": datetime.now(timezone.utc),
+    }
+    result = db.career_plans.insert_one(doc)
+    return str(result.inserted_id)
+
+def _build_tasks_from_doc(doc: dict) -> list[dict]:
+    """Extract tasks from a document, handling both old and new schema.
+
+    New schema: roadmap lives inside ``full_plan``.
+    Old schema: ``roadmap`` sits at the document root.
+    """
+    if doc.get("full_plan"):
+        return _build_tasks(doc["full_plan"])
+    roadmap = doc.get("roadmap")
+    if roadmap and isinstance(roadmap, dict):
+        return _build_tasks({"roadmap": roadmap})
+    return []
+
+def _normalise_doc(doc: dict) -> dict:
+    """Pull career metadata from the old ``profile`` sub-object when needed."""
+    target = doc.get("target_career") or ""
+    stage = doc.get("current_stage") or ""
+    role = doc.get("current_role")
+    profile = doc.get("profile")
+    if not target and profile:
+        target = profile.get("target_career", "")
+    if not stage and profile:
+        stage = profile.get("current_stage", "")
+    summary = doc.get("roadmap_summary")
+    if not summary:
+        rm = doc.get("roadmap") or doc.get("full_plan", {}).get("roadmap") or {}
+        summary = rm.get("summary")
+    return {
+        "target_career": target,
+        "current_stage": stage,
+        "current_role": role,
+        "roadmap_summary": summary,
+    }
+
+def get_user_progress(user_id: str) -> list[dict]:
+    """Return all career-plan entries for *user_id*, newest first.
+
+    - Old documents saved before auth (no ``user_id``) are claimed for
+      the current user so they appear in their progress.
+    - Old documents that pre-date the tasks feature are backfilled
+      on-the-fly from their stored roadmap and persisted once.
+    """
+    db = get_db()
+
+    db.career_plans.update_many(
+        {"user_id": {"$exists": False}},
+        {"$set": {"user_id": user_id}},
+    )
+
+    cursor = (
+        db.career_plans
+        .find({"user_id": user_id})
+        .sort("created_at", -1)
+    )
+    entries = []
+    for doc in cursor:
+        tasks = doc.get("tasks")
+
+        if not tasks:
+            tasks = _build_tasks_from_doc(doc)
+            if tasks:
+                db.career_plans.update_one(
+                    {"_id": doc["_id"]},
+                    {"$set": {"tasks": tasks}},
+                )
+
+        meta = _normalise_doc(doc)
+        entries.append({
+            "id": str(doc["_id"]),
+            "target_career": meta["target_career"],
+            "current_stage": meta["current_stage"],
+            "current_role": meta["current_role"],
+            "is_custom_career": doc.get("is_custom_career", False),
+            "roadmap_summary": meta["roadmap_summary"],
+            "tasks": tasks or [],
+            "created_at": doc.get("created_at", datetime.now(timezone.utc)),
+        })
+    return entries
+
+def toggle_task(plan_id: str, task_id: int, done: bool) -> bool:
+    """Toggle a single task's done state. Returns True if updated."""
+    db = get_db()
+    result = db.career_plans.update_one(
+        {"_id": ObjectId(plan_id), "tasks.id": task_id},
+        {"$set": {"tasks.$.done": done}},
+    )
+    return result.modified_count > 0
+```
+
